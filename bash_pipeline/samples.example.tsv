@@ -1,0 +1,7 @@
+# family_id	sample_id	sex	hifi_reads (comma-separated absolute paths)
+# - For a singleton run, family_id can just repeat the sample_id.
+# - sex is MALE, FEMALE, or "." to auto-infer from chrY coverage (mosdepth).
+# - All paths must live under the --data-root directory used for the run.
+famA	proband	MALE	/data/reads/proband.hifi_reads.bam
+famA	mother	FEMALE	/data/reads/mother.hifi_reads.bam
+famA	father	MALE	/data/reads/father.hifi_reads.bam
