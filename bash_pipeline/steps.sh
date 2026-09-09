@@ -158,7 +158,7 @@ step_deepvariant() {
   local vcf="${sample_id}.${ref_name}.small_variants.vcf.gz"
   local gvcf="${sample_id}.${ref_name}.small_variants.g.vcf.gz"
   local gvcf_flags=""
-  [[ "${DEEPVARIANT_GVCF_OUTPUT}" == "true" ]] && gvcf_flags="--output_gvcf=/data/${gvcf}"
+  [[ "${DEEPVARIANT_GVCF_OUTPUT}" == "true" ]] && gvcf_flags="--output_gvcf=${gvcf}"
 
   if [[ "${USE_GPU}" == "true" && "${USE_PARABRICKS_DEEPVARIANT}" == "true" ]]; then
     # Parabricks path (requires an NVIDIA GPU + nvidia-container-toolkit)
@@ -171,21 +171,21 @@ step_deepvariant() {
       pb_out="${raw_gvcf}"
     fi
     run_docker_gpu "${IMG_PARABRICKS}" "${outdir}" \
-      "export TCMALLOC_MAX_TOTAL_THREAD_CACHE_BYTES=268435456; /usr/local/parabricks/pbrun deepvariant --num-gpus 1 --preserve-file-symlinks --run-partition --mode pacbio --ref '${ref_base}' ${pb_gvcf_flag} --in-bam '${bam_base}' --out-variants '${pb_out}'"
+      "export TCMALLOC_MAX_TOTAL_THREAD_CACHE_BYTES=268435456; /usr/local/parabricks/pbrun deepvariant --num-gpus 1 --preserve-file-symlinks --run-partition --mode pacbio --ref '${ref_base}' ${pb_gvcf_flag} --in-bam '${bam_base}' --out-variants '${pb_out}'" \
+      "${PARABRICKS_GPU_DOCKER_ARGS}"
     if [[ "${DEEPVARIANT_GVCF_OUTPUT}" == "true" ]]; then
       run_docker "${IMG_BASE}" "${outdir}" \
         "bcftools view --output-type z --output-file '${gvcf}' '${raw_gvcf}'; bcftools index --tbi --force '${gvcf}'; rm --verbose '${raw_gvcf}'"
     fi
     run_docker "${IMG_BASE}" "${outdir}" \
       "bcftools view --exclude-uncalled --output-type z --output-file '${vcf}' '${raw_vcf}'; bcftools index --tbi --force '${vcf}'; rm --verbose '${raw_vcf}'"
+  elif [[ "${USE_GPU}" == "true" ]]; then
+    # DeepVariant GPU path, without Parabricks
+    run_docker_gpu "${IMG_DEEPVARIANT_GPU}" "${outdir}" \
+      "/opt/deepvariant/bin/run_deepvariant --model_type=PACBIO --ref='${ref_base}' --reads='${bam_base}' --sample_name='${sample_id}' --output_vcf='${vcf}' ${gvcf_flags} --num_shards=${THREADS}" \
+      "${DEEPVARIANT_GPU_DOCKER_ARGS}"
   else
-    local dv_image="${IMG_DEEPVARIANT_CPU}"
-    local dv_runner=run_docker
-    if [[ "${USE_GPU}" == "true" ]]; then
-      dv_image="${IMG_DEEPVARIANT_GPU}"
-      dv_runner=run_docker_gpu
-    fi
-    "${dv_runner}" "${dv_image}" "${outdir}" \
+    run_docker "${IMG_DEEPVARIANT_CPU}" "${outdir}" \
       "/opt/deepvariant/bin/run_deepvariant --model_type=PACBIO --ref='${ref_base}' --reads='${bam_base}' --sample_name='${sample_id}' --output_vcf='${vcf}' ${gvcf_flags} --num_shards=${THREADS}"
   fi
 

@@ -52,10 +52,11 @@ run_docker() {
 }
 
 run_docker_gpu() {
-  local image="$1" workdir="$2" cmd="$3"
+  local image="$1" workdir="$2" cmd="$3" gpu_docker_args="${4:---gpus all}"
   assert_under_data_root "${workdir}"
   mkdir -p "${workdir}"
-  docker run --rm --gpus all \
+  # shellcheck disable=SC2086 # gpu_docker_args is intentionally word-split (e.g. "-e FOO=bar")
+  docker run --rm ${gpu_docker_args} \
     --user "$(id -u):$(id -g)" \
     -v "${DATA_ROOT}:${DATA_ROOT}" \
     -v "${PIPELINE_DIR}/py:/pipeline-scripts:ro" \

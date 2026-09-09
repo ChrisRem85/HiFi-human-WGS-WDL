@@ -72,9 +72,21 @@ filenames (`<sample_id>.<ref_name>.<suffix>`) that the WDL tasks produce.
 Every knob in `config.sh` can be overridden via environment variable, e.g.:
 
 ```bash
+# DeepVariant on GPU, without Parabricks (uses docker's --runtime=nvidia)
+THREADS=64 USE_GPU=true \
+  bash_pipeline/run_pipeline.sh --manifest-dir ... --data-root ... --out ... --mode family
+
+# DeepVariant via Parabricks on GPU instead
 THREADS=64 USE_GPU=true USE_PARABRICKS_DEEPVARIANT=true \
   bash_pipeline/run_pipeline.sh --manifest-dir ... --data-root ... --out ... --mode family
 ```
+
+`USE_GPU=true` alone runs DeepVariant's own `-gpu` image with
+`DEEPVARIANT_GPU_DOCKER_ARGS` (default: `--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=0`).
+Adding `USE_PARABRICKS_DEEPVARIANT=true` instead runs Parabricks with
+`PARABRICKS_GPU_DOCKER_ARGS` (default: `--gpus all`). Override either
+variable if your host's NVIDIA container setup differs (e.g. to target a
+different GPU index or use Docker's native `--gpus` flag for both).
 
 Because `config.sh` is sourced once per script invocation and every sample in
 a run shares the same environment, changing a variable changes it for every
