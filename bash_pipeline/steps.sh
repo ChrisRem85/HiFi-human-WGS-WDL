@@ -379,7 +379,7 @@ step_kivvi() {
     log "[resume] kivvi ${mode}: messages.txt already present, skipping"
   else
     run_docker "${IMG_KIVVI}" "${outdir}" \
-      "touch messages.txt; kivvi --version >&2; kivvi --bam '$(basename "${aligned_bam}")' --out . --prefix '${out_prefix}' ${mode} || echo 'kivvi ${mode} failed, presumably due to low coverage.' >> messages.txt; if [ -f '${out_prefix}.kivvi.${mode}.vcf' ]; then bgzip '${out_prefix}.kivvi.${mode}.vcf'; tabix --preset vcf '${out_prefix}.kivvi.${mode}.vcf.gz'; fi"
+      "touch messages.txt; kivvi --version >&2; kivvi --bam '$(basename "${aligned_bam}")' --out . --prefix '${out_prefix}' ${mode} || echo 'kivvi ${mode} failed, presumably due to low coverage.' >> messages.txt; if [ -f '${out_prefix}.kivvi.${mode}.vcf' ]; then bgzip --force '${out_prefix}.kivvi.${mode}.vcf'; tabix --force --preset vcf '${out_prefix}.kivvi.${mode}.vcf.gz'; fi"
   fi
 
   printf '%s\t%s\n' "${outdir}/${out_prefix}.kivvi.${mode}.vcf.gz" "${outdir}/${out_prefix}.kivvi.${mode}.vcf.gz.tbi"
