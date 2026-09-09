@@ -105,5 +105,10 @@ sample in that run — there's no per-sample parameter drift.
   your own hardware instead.
 - `fail_reads` (optional low-quality/failed-read rescue for TRGT) is not
   implemented; it's an optional input in the WDL workflows too.
-- Alignment chunking uses a fixed 16-way split (matching the WDL default)
-  when an input BAM is unaligned and `USE_ALIGNMENT_CHUNKING=true`.
+- Alignment chunking (`--chunk N/M`) exists in the WDL purely to scatter
+  `pbmm2 align` across many separate cloud/HPC nodes in parallel. This
+  pipeline runs everything on one node, and its chunk loop is sequential, so
+  chunking would only add repeated startup/index-load overhead with no
+  speedup — it therefore defaults to `USE_ALIGNMENT_CHUNKING=false` (single
+  `pbmm2 align` pass per input BAM). Set it to `true` only if you also
+  parallelize the chunk loop yourself.

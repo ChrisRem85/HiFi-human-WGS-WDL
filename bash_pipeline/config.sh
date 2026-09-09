@@ -52,8 +52,8 @@ esac
 : "${THREADS:=$(nproc 2>/dev/null || echo 8)}"
 : "${USE_GPU:=false}"                    # true to use DeepVariant/Parabricks GPU path
 : "${USE_PARABRICKS_DEEPVARIANT:=false}" # true to use Parabricks instead of DeepVariant
-: "${USE_ALIGNMENT_CHUNKING:=true}"      # chunk unaligned HiFi BAMs for parallel pbmm2 alignment
-: "${ALIGNMENT_CHUNKS:=16}"              # matches WDL's fixed 16-way chunking
+: "${USE_ALIGNMENT_CHUNKING:=false}"     # WDL scatters chunks across cloud nodes; this pipeline runs them sequentially on one node, so chunking only adds overhead here
+: "${ALIGNMENT_CHUNKS:=16}"              # used only if USE_ALIGNMENT_CHUNKING=true (matches WDL's fixed 16-way chunking)
 : "${GLNEXUS_MEM_GB:=60}"
 
 # `docker run` GPU-exposure flags, split by GPU consumer since they expect
