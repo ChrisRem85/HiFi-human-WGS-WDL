@@ -3,10 +3,13 @@
 # for every sample listed in the manifest produced by collect_manifest.sh.
 #
 # Usage:
-#   run_pipeline.sh --manifest-dir <dir> --data-root <dir> --out <dir> --mode singleton|family
+#   run_pipeline.sh --manifest-dir <dir> --data-root <dir> --out <dir> --mode singleton|family [--resume]
 #
 # --manifest-dir must be the --out directory previously passed to
 # collect_manifest.sh (it contains ref.env and samples.tsv).
+#
+# --resume skips a step when its expected output file(s) already exist from a
+# prior run, instead of unconditionally re-running and overwriting them.
 #
 # Every sample is run through the identical sequence of steps, using the
 # identical config.sh parameters and identical output filenames (see
@@ -31,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --data-root) DATA_ROOT="$2"; shift 2 ;;
     --out) OUT_ROOT="$2"; shift 2 ;;
     --mode) MODE="$2"; shift 2 ;;
+    --resume) RESUME=true; shift ;;
     *) die "Unknown argument: $1" ;;
   esac
 done
@@ -54,7 +58,7 @@ source "${MANIFEST_DIR}/ref.env"
 MAX_NORM_FEMALE_CHRY_DEPTH="${MAX_NORM_FEMALE_CHRY_DEPTH:-${MOSDEPTH_MAX_NORM_FEMALE_CHRY_DEPTH_DEFAULT}}"
 
 log "=== HiFi human WGS bash pipeline ==="
-log "mode=${MODE} ref_name=${REF_NAME} data_root=${DATA_ROOT} out=${OUT_ROOT} threads=${THREADS}"
+log "mode=${MODE} ref_name=${REF_NAME} data_root=${DATA_ROOT} out=${OUT_ROOT} threads=${THREADS} resume=${RESUME}"
 
 declare -a ALL_SAMPLE_IDS=()
 declare -A SAMPLE_SEX=()

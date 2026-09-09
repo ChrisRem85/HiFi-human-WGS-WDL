@@ -50,8 +50,10 @@ step_pbmm2_align() {
 
     num_chunks=0
     if [[ "${USE_ALIGNMENT_CHUNKING}" == "true" && "${is_aligned}" == "0" ]]; then
-      run_docker "${IMG_PBTK}" "${work}" \
-        "pbindex --version; pbindex --num-threads ${THREADS} '${bam_base}'"
+      if ! resume_available "${work}/${bam_base}.pbi"; then
+        run_docker "${IMG_PBTK}" "${work}" \
+          "pbindex --version; pbindex --num-threads ${THREADS} '${bam_base}'"
+      fi
       num_chunks="${ALIGNMENT_CHUNKS}"
     fi
 
@@ -61,15 +63,23 @@ step_pbmm2_align() {
 
     if [[ "${num_chunks}" -eq 0 ]]; then
       local out_bam="${sample_id}.${movie}.chunk_0.${ref_name}.aligned.bam"
-      run_docker "${IMG_PBMM2}" "${work}" \
-        "pbmm2 --version; pbmm2 align --num-threads ${THREADS} --sort-memory 4G --preset HIFI --sample '${sample_id}' --log-level INFO --sort --strip-tags HP,PS,PC ${strip_flag} ${unmapped_flag} --min-length ${PBMM2_MIN_LENGTH} '${mmi}' '${bam_base}' '${out_bam}'"
+      if resume_available "${work}/${out_bam}" "${work}/${out_bam}.bai"; then
+        log "[resume] pbmm2 align: ${out_bam} already present, skipping"
+      else
+        run_docker "${IMG_PBMM2}" "${work}" \
+          "pbmm2 --version; pbmm2 align --num-threads ${THREADS} --sort-memory 4G --preset HIFI --sample '${sample_id}' --log-level INFO --sort --strip-tags HP,PS,PC ${strip_flag} ${unmapped_flag} --min-length ${PBMM2_MIN_LENGTH} '${mmi}' '${bam_base}' '${out_bam}'"
+      fi
       aligned_bams+=("${work}/${out_bam}")
     else
       local c
       for c in $(seq 1 "${num_chunks}"); do
         local out_bam="${sample_id}.${movie}.chunk_${c}.${ref_name}.aligned.bam"
-        run_docker "${IMG_PBMM2}" "${work}" \
-          "pbmm2 --version; pbmm2 align --num-threads ${THREADS} --sort-memory 4G --preset HIFI --sample '${sample_id}' --log-level INFO --sort --strip-tags HP,PS,PC ${strip_flag} ${unmapped_flag} --min-length ${PBMM2_MIN_LENGTH} --chunk '${c}/${num_chunks}' --chunk-mode scatter '${mmi}' '${bam_base}' '${out_bam}'"
+        if resume_available "${work}/${out_bam}" "${work}/${out_bam}.bai"; then
+          log "[resume] pbmm2 align: ${out_bam} already present, skipping"
+        else
+          run_docker "${IMG_PBMM2}" "${work}" \
+            "pbmm2 --version; pbmm2 align --num-threads ${THREADS} --sort-memory 4G --preset HIFI --sample '${sample_id}' --log-level INFO --sort --strip-tags HP,PS,PC ${strip_flag} ${unmapped_flag} --min-length ${PBMM2_MIN_LENGTH} --chunk '${c}/${num_chunks}' --chunk-mode scatter '${mmi}' '${bam_base}' '${out_bam}'"
+        fi
         aligned_bams+=("${work}/${out_bam}")
       done
     fi
@@ -79,17 +89,21 @@ step_pbmm2_align() {
   if [[ "${#aligned_bams[@]}" -gt 1 ]]; then
     local merge_dir="${outdir}/merge"
     mkdir -p "${merge_dir}"
-    local merge_list="" b
-    for b in "${aligned_bams[@]}"; do
-      link_input "${b}" "${merge_dir}"
-      link_input "${b}.bai" "${merge_dir}"
-      merge_list+=" $(basename "${b}")"
-    done
     local out_prefix="${sample_id}.${ref_name}.hifi_reads"
-    run_docker "${IMG_PBSAMOA}" "${merge_dir}" \
-      "pbsamoa merge --compress-threads $(( (THREADS * 3 + 3) / 4 )) --decode-threads $(( THREADS / 4 > 0 ? THREADS / 4 : 1 )) --memory '$(( MERGE_MEM_GB / 2 > 0 ? MERGE_MEM_GB / 2 : 1 ))G' --compression 6 --bai '${out_prefix}.bam'${merge_list}"
     final_bam="${merge_dir}/${out_prefix}.bam"
     final_bai="${merge_dir}/${out_prefix}.bam.bai"
+    if resume_available "${final_bam}" "${final_bai}"; then
+      log "[resume] pbsamoa merge: ${out_prefix}.bam already present, skipping"
+    else
+      local merge_list="" b
+      for b in "${aligned_bams[@]}"; do
+        link_input "${b}" "${merge_dir}"
+        link_input "${b}.bai" "${merge_dir}"
+        merge_list+=" $(basename "${b}")"
+      done
+      run_docker "${IMG_PBSAMOA}" "${merge_dir}" \
+        "pbsamoa merge --compress-threads $(( (THREADS * 3 + 3) / 4 )) --decode-threads $(( THREADS / 4 > 0 ? THREADS / 4 : 1 )) --memory '$(( MERGE_MEM_GB / 2 > 0 ? MERGE_MEM_GB / 2 : 1 ))G' --compression 6 --bai '${out_prefix}.bam'${merge_list}"
+    fi
   else
     final_bam="${aligned_bams[0]}"
     final_bai="${aligned_bams[0]}.bai"
@@ -111,24 +125,32 @@ step_mosdepth() {
   bam_base="$(basename "${aligned_bam}")"
   out_prefix="${bam_base%.bam}"
 
-  run_docker "${IMG_MOSDEPTH}" "${outdir}" \
-    "mosdepth --version; mosdepth --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --by 500 --no-per-base --use-median '${out_prefix}' '${bam_base}'"
-
   local summary="${sample_id}.${ref_name}.mosdepth.summary.txt"
   local region_bed="${sample_id}.${ref_name}.mosdepth.regions.bed.gz"
   local region_bed_index="${sample_id}.${ref_name}.mosdepth.regions.bed.gz.csi"
-  if [[ ! -f "${outdir}/${summary}" ]]; then
-    mv "${outdir}/${out_prefix}.mosdepth.summary.txt" "${outdir}/${summary}"
-    mv "${outdir}/${out_prefix}.regions.bed.gz" "${outdir}/${region_bed}"
-    mv "${outdir}/${out_prefix}.regions.bed.gz.csi" "${outdir}/${region_bed_index}"
+  if resume_available "${outdir}/${summary}" "${outdir}/${region_bed}" "${outdir}/${region_bed_index}"; then
+    log "[resume] mosdepth: ${summary} already present, skipping"
+  else
+    run_docker "${IMG_MOSDEPTH}" "${outdir}" \
+      "mosdepth --version; mosdepth --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --by 500 --no-per-base --use-median '${out_prefix}' '${bam_base}'"
+
+    if [[ ! -f "${outdir}/${summary}" ]]; then
+      mv --verbose "${outdir}/${out_prefix}.mosdepth.summary.txt" "${outdir}/${summary}"
+      mv --verbose "${outdir}/${out_prefix}.regions.bed.gz" "${outdir}/${region_bed}"
+      mv --verbose "${outdir}/${out_prefix}.regions.bed.gz.csi" "${outdir}/${region_bed_index}"
+    fi
   fi
 
   local plot="${sample_id}.${ref_name}.mosdepth.depth_distribution.png"
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "python3 /pipeline-scripts/plot_depth_distribution.py '${region_bed}' '${sample_id}.${ref_name}' '${plot}'"
+  if ! resume_available "${outdir}/${plot}"; then
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "python3 /pipeline-scripts/plot_depth_distribution.py '${region_bed}' '${sample_id}.${ref_name}' '${plot}'"
+  fi
 
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "python3 /pipeline-scripts/mosdepth_stats.py '${summary}' '${max_norm_female_chrY_depth}' mean_depth.txt inferred_sex.txt"
+  if ! resume_available "${outdir}/mean_depth.txt" "${outdir}/inferred_sex.txt"; then
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "python3 /pipeline-scripts/mosdepth_stats.py '${summary}' '${max_norm_female_chrY_depth}' mean_depth.txt inferred_sex.txt"
+  fi
 
   local mean_depth inferred_sex
   mean_depth="$(cat "${outdir}/mean_depth.txt")"
@@ -160,7 +182,12 @@ step_deepvariant() {
   local gvcf_flags=""
   [[ "${DEEPVARIANT_GVCF_OUTPUT}" == "true" ]] && gvcf_flags="--output_gvcf=${gvcf}"
 
-  if [[ "${USE_GPU}" == "true" && "${USE_PARABRICKS_DEEPVARIANT}" == "true" ]]; then
+  local -a dv_expected=("${outdir}/${vcf}" "${outdir}/${vcf}.tbi")
+  [[ "${DEEPVARIANT_GVCF_OUTPUT}" == "true" ]] && dv_expected+=("${outdir}/${gvcf}" "${outdir}/${gvcf}.tbi")
+
+  if resume_available "${dv_expected[@]}"; then
+    log "[resume] DeepVariant: ${vcf} already present, skipping"
+  elif [[ "${USE_GPU}" == "true" && "${USE_PARABRICKS_DEEPVARIANT}" == "true" ]]; then
     # Parabricks path (requires an NVIDIA GPU + nvidia-container-toolkit)
     local raw_vcf raw_gvcf
     raw_vcf="${sample_id}.${ref_name}.small_variants.vcf"
@@ -218,8 +245,12 @@ step_sawfish_discover() {
   link_input "${expected_bed}" "${outdir}"
 
   local out_prefix="${sample_id}"
-  run_docker "${IMG_SAWFISH}" "${outdir}" \
-    "sawfish --version; sawfish discover --threads ${THREADS} --disable-path-canonicalization --ref '$(basename "${ref_fasta}")' --bam '$(basename "${aligned_bam}")' --expected-cn '$(basename "${expected_bed}")' --cnv-excluded-regions '$(basename "${exclude_bed}")' --output-dir '${out_prefix}'"
+  if resume_available "${outdir}/${out_prefix}"; then
+    log "[resume] sawfish discover: ${out_prefix} already present, skipping"
+  else
+    run_docker "${IMG_SAWFISH}" "${outdir}" \
+      "sawfish --version; sawfish discover --threads ${THREADS} --disable-path-canonicalization --ref '$(basename "${ref_fasta}")' --bam '$(basename "${aligned_bam}")' --expected-cn '$(basename "${expected_bed}")' --cnv-excluded-regions '$(basename "${exclude_bed}")' --output-dir '${out_prefix}'"
+  fi
 
   printf '%s\n' "${outdir}/${out_prefix}"
 }
@@ -231,56 +262,65 @@ step_sawfish_call() {
   local out_prefix="$1" outdir="$2" ref_fasta="$3" ref_index="$4" \
     sample_ids_csv="$5" discover_dirs_csv="$6" aligned_bams_csv="$7" aligned_bam_indices_csv="$8"
   mkdir -p "${outdir}"
-  link_input "${ref_fasta}" "${outdir}"
-  link_input "${ref_index}" "${outdir}"
 
-  IFS=',' read -r -a sample_ids <<< "${sample_ids_csv}"
-  IFS=',' read -r -a discover_dirs <<< "${discover_dirs_csv}"
-  IFS=',' read -r -a aligned_bams <<< "${aligned_bams_csv}"
-  IFS=',' read -r -a aligned_bam_indices <<< "${aligned_bam_indices_csv}"
+  local vcf="${outdir}/${out_prefix}.vcf.gz"
+  local vcf_index="${outdir}/${out_prefix}.vcf.gz.tbi"
 
-  local b i
-  for b in "${aligned_bams[@]}" "${aligned_bam_indices[@]}"; do
-    link_input "${b}" "${outdir}"
-  done
-  # sawfish reads discover output from a directory named after the sample; copy
-  # (not symlink) each discover directory into the call working dir under its
-  # own name, matching the WDL's `tar --extract` of one dir per sample.
-  local samples_flags=""
-  for i in "${!sample_ids[@]}"; do
-    local sid="${sample_ids[$i]}" ddir="${discover_dirs[$i]}"
-    rm --recursive --force "${outdir}/${sid}"
-    cp --recursive "${ddir}" "${outdir}/${sid}"
-    samples_flags+=" --sample '${sid}'"
-  done
+  if resume_available "${vcf}" "${vcf_index}"; then
+    log "[resume] sawfish call: ${out_prefix}.vcf.gz already present, skipping"
+  else
+    link_input "${ref_fasta}" "${outdir}"
+    link_input "${ref_index}" "${outdir}"
 
-  run_docker "${IMG_SAWFISH}" "${outdir}" \
-    "sawfish --version; sawfish joint-call --threads ${THREADS} --report-supporting-reads${samples_flags} --output-dir '${out_prefix}'"
+    local sample_ids discover_dirs aligned_bams aligned_bam_indices
+    IFS=',' read -r -a sample_ids <<< "${sample_ids_csv}"
+    IFS=',' read -r -a discover_dirs <<< "${discover_dirs_csv}"
+    IFS=',' read -r -a aligned_bams <<< "${aligned_bams_csv}"
+    IFS=',' read -r -a aligned_bam_indices <<< "${aligned_bam_indices_csv}"
 
-  run_docker "${IMG_SAWFISH}" "${outdir}" \
-    "sawshark --threads $(( THREADS / 2 > 0 ? THREADS / 2 : 1 )) --vcf '${out_prefix}/genotyped.sv.vcf.gz' | bcftools view - --output-type z --write-index=tbi --output '${out_prefix}.vcf.gz'"
+    local b i
+    for b in "${aligned_bams[@]}" "${aligned_bam_indices[@]}"; do
+      link_input "${b}" "${outdir}"
+    done
+    # sawfish reads discover output from a directory named after the sample; copy
+    # (not symlink) each discover directory into the call working dir under its
+    # own name, matching the WDL's `tar --extract` of one dir per sample.
+    local samples_flags=""
+    for i in "${!sample_ids[@]}"; do
+      local sid="${sample_ids[$i]}" ddir="${discover_dirs[$i]}"
+      rm --recursive --force "${outdir}/${sid}"
+      cp --recursive "${ddir}" "${outdir}/${sid}"
+      samples_flags+=" --sample '${sid}'"
+    done
 
-  mv "${outdir}/${out_prefix}/supporting_reads.json.gz" "${outdir}/${out_prefix}.supporting_reads.json.gz" 2>/dev/null || true
+    run_docker "${IMG_SAWFISH}" "${outdir}" \
+      "sawfish --version; sawfish joint-call --threads ${THREADS} --report-supporting-reads${samples_flags} --output-dir '${out_prefix}'"
 
-  for i in "${!sample_ids[@]}"; do
-    local sid="${sample_ids[$i]}" prefix
-    if [[ "${#sample_ids[@]}" -gt 1 ]]; then
-      prefix="${sid}.${out_prefix}"
-    else
-      prefix="${out_prefix}"
-    fi
-    local sampledir
-    sampledir="$(find "${outdir}/${out_prefix}/samples" -maxdepth 1 -type d -name "sample????_${sid}" | head -n1)"
-    if [[ -n "${sampledir}" ]]; then
-      mv "${sampledir}/copynum.bedgraph" "${outdir}/${prefix}.copynum.bedgraph"
-      mv "${sampledir}/depth.bw" "${outdir}/${prefix}.depth.bw"
-      mv "${sampledir}/gc_bias_corrected_depth.bw" "${outdir}/${prefix}.gc_bias_corrected_depth.bw"
-      mv "${sampledir}/copynum.summary.json" "${outdir}/${prefix}.copynum.summary.json"
-    fi
-  done
-  for sid in "${sample_ids[@]}"; do rm --recursive --force "${outdir}/${sid}"; done
+    run_docker "${IMG_SAWFISH}" "${outdir}" \
+      "sawshark --threads $(( THREADS / 2 > 0 ? THREADS / 2 : 1 )) --vcf '${out_prefix}/genotyped.sv.vcf.gz' | bcftools view - --output-type z --write-index=tbi --output '${out_prefix}.vcf.gz'"
 
-  printf '%s\t%s\t%s\n' "${outdir}/${out_prefix}.vcf.gz" "${outdir}/${out_prefix}.vcf.gz.tbi" \
+    mv --verbose "${outdir}/${out_prefix}/supporting_reads.json.gz" "${outdir}/${out_prefix}.supporting_reads.json.gz" 2>/dev/null || true
+
+    for i in "${!sample_ids[@]}"; do
+      local sid="${sample_ids[$i]}" prefix
+      if [[ "${#sample_ids[@]}" -gt 1 ]]; then
+        prefix="${sid}.${out_prefix}"
+      else
+        prefix="${out_prefix}"
+      fi
+      local sampledir
+      sampledir="$(find "${outdir}/${out_prefix}/samples" -maxdepth 1 -type d -name "sample????_${sid}" | head -n1)"
+      if [[ -n "${sampledir}" ]]; then
+        mv --verbose "${sampledir}/copynum.bedgraph" "${outdir}/${prefix}.copynum.bedgraph"
+        mv --verbose "${sampledir}/depth.bw" "${outdir}/${prefix}.depth.bw"
+        mv --verbose "${sampledir}/gc_bias_corrected_depth.bw" "${outdir}/${prefix}.gc_bias_corrected_depth.bw"
+        mv --verbose "${sampledir}/copynum.summary.json" "${outdir}/${prefix}.copynum.summary.json"
+      fi
+    done
+    for sid in "${sample_ids[@]}"; do rm --recursive --force "${outdir}/${sid}"; done
+  fi
+
+  printf '%s\t%s\t%s\n' "${vcf}" "${vcf_index}" \
     "${outdir}/${out_prefix}.supporting_reads.json.gz"
 }
 
@@ -296,8 +336,12 @@ step_paraphase() {
   link_input "${ref_fasta}" "${outdir}"
   link_input "${ref_index}" "${outdir}"
 
-  run_docker "${IMG_PARAPHASE}" "${outdir}" \
-    "paraphase --version; paraphase --threads ${THREADS} --bam '$(basename "${aligned_bam}")' --reference '$(basename "${ref_fasta}")' --genome '${genome_build}' --out ./ 2>&1 | tee paraphase.log || echo 'Paraphase failed for sample ${sample_id}' >> messages.txt; if ls '${sample_id}_paraphase_vcfs'/*.vcf &> /dev/null; then tar --gzip --create --file '${sample_id}.paraphase_vcfs.tar.gz' '${sample_id}_paraphase_vcfs'/*.vcf; fi"
+  if resume_available "${outdir}/${sample_id}.paraphase.json"; then
+    log "[resume] paraphase: ${sample_id}.paraphase.json already present, skipping"
+  else
+    run_docker "${IMG_PARAPHASE}" "${outdir}" \
+      "paraphase --version; paraphase --threads ${THREADS} --bam '$(basename "${aligned_bam}")' --reference '$(basename "${ref_fasta}")' --genome '${genome_build}' --out ./ 2>&1 | tee paraphase.log || echo 'Paraphase failed for sample ${sample_id}' >> messages.txt; if ls '${sample_id}_paraphase_vcfs'/*.vcf &> /dev/null; then tar --gzip --create --verbose --file '${sample_id}.paraphase_vcfs.tar.gz' '${sample_id}_paraphase_vcfs'/*.vcf; fi"
+  fi
 
   printf '%s\t%s\t%s\t%s\n' \
     "${outdir}/${sample_id}.paraphase.json" "${outdir}/${sample_id}.paraphase.bam" \
@@ -313,8 +357,12 @@ step_mitorsaw() {
   link_input "${ref_fasta}" "${outdir}"
   link_input "${ref_index}" "${outdir}"
 
-  run_docker "${IMG_MITORSAW}" "${outdir}" \
-    "mitorsaw --version; mitorsaw haplotype --reference '$(basename "${ref_fasta}")' --bam '$(basename "${aligned_bam}")' --output-vcf '${out_prefix}.mitorsaw.vcf.gz' --output-hap-stats '${out_prefix}.mitorsaw.json'"
+  if resume_available "${outdir}/${out_prefix}.mitorsaw.vcf.gz" "${outdir}/${out_prefix}.mitorsaw.vcf.gz.tbi" "${outdir}/${out_prefix}.mitorsaw.json"; then
+    log "[resume] mitorsaw: ${out_prefix}.mitorsaw.vcf.gz already present, skipping"
+  else
+    run_docker "${IMG_MITORSAW}" "${outdir}" \
+      "mitorsaw --version; mitorsaw haplotype --reference '$(basename "${ref_fasta}")' --bam '$(basename "${aligned_bam}")' --output-vcf '${out_prefix}.mitorsaw.vcf.gz' --output-hap-stats '${out_prefix}.mitorsaw.json'"
+  fi
 
   printf '%s\t%s\t%s\n' "${outdir}/${out_prefix}.mitorsaw.vcf.gz" "${outdir}/${out_prefix}.mitorsaw.vcf.gz.tbi" \
     "${outdir}/${out_prefix}.mitorsaw.json"
@@ -327,8 +375,12 @@ step_kivvi() {
   link_input "${aligned_bam}" "${outdir}"
   link_input "${aligned_bam_index}" "${outdir}"
 
-  run_docker "${IMG_KIVVI}" "${outdir}" \
-    "touch messages.txt; kivvi --version; kivvi --bam '$(basename "${aligned_bam}")' --out . --prefix '${out_prefix}' ${mode} || echo 'kivvi ${mode} failed, presumably due to low coverage.' >> messages.txt; if [ -f '${out_prefix}.kivvi.${mode}.vcf' ]; then bgzip '${out_prefix}.kivvi.${mode}.vcf'; tabix --preset vcf '${out_prefix}.kivvi.${mode}.vcf.gz'; fi"
+  if resume_available "${outdir}/messages.txt"; then
+    log "[resume] kivvi ${mode}: messages.txt already present, skipping"
+  else
+    run_docker "${IMG_KIVVI}" "${outdir}" \
+      "touch messages.txt; kivvi --version; kivvi --bam '$(basename "${aligned_bam}")' --out . --prefix '${out_prefix}' ${mode} || echo 'kivvi ${mode} failed, presumably due to low coverage.' >> messages.txt; if [ -f '${out_prefix}.kivvi.${mode}.vcf' ]; then bgzip '${out_prefix}.kivvi.${mode}.vcf'; tabix --preset vcf '${out_prefix}.kivvi.${mode}.vcf.gz'; fi"
+  fi
 
   printf '%s\t%s\n' "${outdir}/${out_prefix}.kivvi.${mode}.vcf.gz" "${outdir}/${out_prefix}.kivvi.${mode}.vcf.gz.tbi"
 }
@@ -365,13 +417,20 @@ step_hiphase() {
   [[ "${HIPHASE_PHASE_SINGLETONS}" == "true" ]] && opt_flags+=" --phase-singletons"
   [[ "${HIPHASE_DISABLE_GLOBAL_REALIGNMENT}" == "true" ]] && opt_flags+=" --disable-global-realignment"
 
-  run_docker "${IMG_HIPHASE}" "${outdir}" \
-    "hiphase --version; hiphase --threads ${THREADS}${opt_flags} --sample-name '${sample_id}' --vcf '$(basename "${small_variant_vcf}")' --vcf '$(basename "${sv_vcf}")' --output-vcf '${phased_small_vcf}' --output-vcf '${phased_sv_vcf}' --bam '$(basename "${aligned_bam}")' --output-bam '${haplotagged_bam}' --reference '$(basename "${ref_fasta}")' --summary-file '${sample_id}.${ref_name}.hiphase.stats.tsv' --blocks-file '${sample_id}.${ref_name}.hiphase.blocks.tsv' --haplotag-file '${sample_id}.${ref_name}.hiphase.haplotags.tsv'; gzip '${sample_id}.${ref_name}.hiphase.haplotags.tsv'"
-
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "samtools index '${haplotagged_bam}'"
-
   local stats="${sample_id}.${ref_name}.hiphase.stats.tsv"
+  local blocks="${sample_id}.${ref_name}.hiphase.blocks.tsv"
+  if resume_available "${outdir}/${phased_small_vcf}" "${outdir}/${phased_sv_vcf}" "${outdir}/${haplotagged_bam}" "${outdir}/${stats}" "${outdir}/${blocks}"; then
+    log "[resume] hiphase: ${haplotagged_bam} already present, skipping"
+  else
+    run_docker "${IMG_HIPHASE}" "${outdir}" \
+      "hiphase --version; hiphase --threads ${THREADS}${opt_flags} --sample-name '${sample_id}' --vcf '$(basename "${small_variant_vcf}")' --vcf '$(basename "${sv_vcf}")' --output-vcf '${phased_small_vcf}' --output-vcf '${phased_sv_vcf}' --bam '$(basename "${aligned_bam}")' --output-bam '${haplotagged_bam}' --reference '$(basename "${ref_fasta}")' --summary-file '${stats}' --blocks-file '${blocks}' --haplotag-file '${sample_id}.${ref_name}.hiphase.haplotags.tsv'; gzip '${sample_id}.${ref_name}.hiphase.haplotags.tsv'"
+  fi
+
+  if ! resume_available "${outdir}/${haplotagged_bam}.bai"; then
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "samtools index '${haplotagged_bam}'"
+  fi
+
   local phased_bp phase_ng50
   phased_bp="$(run_docker "${IMG_BASE}" "${outdir}" "python3 /pipeline-scripts/hiphase_get_stat.py '${stats}' basepairs_per_block_sum")"
   phase_ng50="$(run_docker "${IMG_BASE}" "${outdir}" "python3 /pipeline-scripts/hiphase_get_stat.py '${stats}' block_ng50")"
@@ -407,17 +466,23 @@ step_trgt() {
   link_input "${expected_bed}" "${outdir}"
 
   local out_prefix="${sample_id}.${ref_name}"
-  run_docker "${IMG_TRGT}" "${outdir}" \
-    "trgt --version; trgt genotype --threads ${THREADS} --karyotype '${karyotype}' --genome '$(basename "${ref_fasta}")' --repeats '$(basename "${trgt_bed}")' --reads '$(basename "${aligned_bam}")' --max-depth ${TRGT_MAX_DEPTH} --min-read-quality=${TRGT_MIN_READ_QUALITY} --output-prefix '${out_prefix}.trgt'"
+  if resume_available "${outdir}/${out_prefix}.trgt.sorted.vcf.gz" "${outdir}/${out_prefix}.trgt.sorted.vcf.gz.tbi" \
+    "${outdir}/${out_prefix}.trgt.spanning.sorted.bam" "${outdir}/${out_prefix}.trgt.spanning.sorted.bam.bai" \
+    "${outdir}/${out_prefix}.trgt.dropouts.txt"; then
+    log "[resume] trgt genotype: ${out_prefix}.trgt.sorted.vcf.gz already present, skipping"
+  else
+    run_docker "${IMG_TRGT}" "${outdir}" \
+      "trgt --version; trgt genotype --threads ${THREADS} --karyotype '${karyotype}' --genome '$(basename "${ref_fasta}")' --repeats '$(basename "${trgt_bed}")' --reads '$(basename "${aligned_bam}")' --max-depth ${TRGT_MAX_DEPTH} --min-read-quality=${TRGT_MIN_READ_QUALITY} --output-prefix '${out_prefix}.trgt'"
 
-  run_docker "${IMG_TRGT}" "${outdir}" \
-    "bcftools sort --output-type z --output '${out_prefix}.trgt.sorted.vcf.gz' --write-index=tbi '${out_prefix}.trgt.vcf.gz'"
+    run_docker "${IMG_TRGT}" "${outdir}" \
+      "bcftools sort --output-type z --output '${out_prefix}.trgt.sorted.vcf.gz' --write-index=tbi '${out_prefix}.trgt.vcf.gz'"
 
-  run_docker "${IMG_TRGT}" "${outdir}" \
-    "samtools sort --threads ${THREADS} -m 800M --write-index -o '${out_prefix}.trgt.spanning.sorted.bam##idx##${out_prefix}.trgt.spanning.sorted.bam.bai' '${out_prefix}.trgt.spanning.bam'"
+    run_docker "${IMG_TRGT}" "${outdir}" \
+      "samtools sort --threads ${THREADS} -m 800M --write-index -o '${out_prefix}.trgt.spanning.sorted.bam##idx##${out_prefix}.trgt.spanning.sorted.bam.bai' '${out_prefix}.trgt.spanning.bam'"
 
-  run_docker "${IMG_TRGT}" "${outdir}" \
-    "find_trgt_dropouts.py --ploidybed '$(basename "${expected_bed}")' --coverage ${TRGT_HAPLOTYPE_COVERAGE_THRESHOLD} '$(basename "${trgt_bed}")' '${out_prefix}.trgt.spanning.sorted.bam' > '${out_prefix}.trgt.dropouts.txt'"
+    run_docker "${IMG_TRGT}" "${outdir}" \
+      "find_trgt_dropouts.py --ploidybed '$(basename "${expected_bed}")' --coverage ${TRGT_HAPLOTYPE_COVERAGE_THRESHOLD} '$(basename "${trgt_bed}")' '${out_prefix}.trgt.spanning.sorted.bam' > '${out_prefix}.trgt.dropouts.txt'"
+  fi
 
   local genotyped uncalled
   genotyped="$(run_docker "${IMG_TRGT}" "${outdir}" \
@@ -442,8 +507,12 @@ step_pbjam_bam_stats() {
   link_input "${bam_index}" "${outdir}"
 
   local json="${sample_id}.${ref_name}.pbjam.json"
-  run_docker "${IMG_PBJAM}" "${outdir}" \
-    "pbjam bam-stats --threads ${THREADS} --include-unmapped --input-bam '$(basename "${bam}")' --output-json '${json}' --plot-label '${sample_id}.${ref_name}' --image-prefix '${sample_id}.${ref_name}'; mv '${sample_id}.${ref_name}.read_length_distribution.png' '${sample_id}.read_length_distribution.png'; mv '${sample_id}.${ref_name}.read_quality_distribution.png' '${sample_id}.read_quality_distribution.png'"
+  if resume_available "${outdir}/${json}" "${outdir}/${sample_id}.read_length_distribution.png" "${outdir}/${sample_id}.read_quality_distribution.png"; then
+    log "[resume] pbjam bam-stats: ${json} already present, skipping"
+  else
+    run_docker "${IMG_PBJAM}" "${outdir}" \
+      "pbjam bam-stats --threads ${THREADS} --include-unmapped --input-bam '$(basename "${bam}")' --output-json '${json}' --plot-label '${sample_id}.${ref_name}' --image-prefix '${sample_id}.${ref_name}'; mv --verbose '${sample_id}.${ref_name}.read_length_distribution.png' '${sample_id}.read_length_distribution.png'; mv --verbose '${sample_id}.${ref_name}.read_quality_distribution.png' '${sample_id}.read_quality_distribution.png'"
+  fi
 
   local key val results=()
   for key in read_count read_length_mean read_length_median read_length_n50 \
@@ -472,25 +541,37 @@ step_bcftools_stats_roh() {
   ref_base="$(basename "${ref_fasta}")"
   stats_txt="${sample_id}.${ref_name}.small_variants.vcf.stats.txt"
 
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "bcftools --version; bcftools norm --fasta-ref '${ref_base}' --multiallelics - '${vcf_base}' 2>/dev/null | bcftools view --apply-filters .,PASS --exclude 'GQ<20.0 || GT=\"ref\" || GT=\"mis\" || ALT=\".\"' --trim-alt-alleles - | bcftools stats --samples '${sample_id}' --fasta-ref '${ref_base}' - > '${stats_txt}'"
+  if resume_available "${outdir}/${stats_txt}" "${outdir}/snv_count.txt" "${outdir}/indel_count.txt" "${outdir}/tstv_ratio.txt" "${outdir}/hethom_ratio.txt"; then
+    log "[resume] bcftools stats: ${stats_txt} already present, skipping"
+  else
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "bcftools --version; bcftools norm --fasta-ref '${ref_base}' --multiallelics - '${vcf_base}' 2>/dev/null | bcftools view --apply-filters .,PASS --exclude 'GQ<20.0 || GT=\"ref\" || GT=\"mis\" || ALT=\".\"' --trim-alt-alleles - | bcftools stats --samples '${sample_id}' --fasta-ref '${ref_base}' - > '${stats_txt}'"
 
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "grep -w '^SN' '${stats_txt}' | grep 'number of SNPs:' | cut -f4 > snv_count.txt; grep -w '^SN' '${stats_txt}' | grep 'number of indels:' | cut -f4 > indel_count.txt; grep -w '^TSTV' '${stats_txt}' | cut -f5 > tstv_ratio.txt; nHets=\$(grep -w '^PSC' '${stats_txt}' | cut -f6); nNonRefHom=\$(grep -w '^PSC' '${stats_txt}' | cut -f5); printf %.2f \"\$((10**2 * nHets / nNonRefHom))e-2\" > hethom_ratio.txt"
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "grep -w '^SN' '${stats_txt}' | grep 'number of SNPs:' | cut -f4 > snv_count.txt; grep -w '^SN' '${stats_txt}' | grep 'number of indels:' | cut -f4 > indel_count.txt; grep -w '^TSTV' '${stats_txt}' | cut -f5 > tstv_ratio.txt; nHets=\$(grep -w '^PSC' '${stats_txt}' | cut -f6); nNonRefHom=\$(grep -w '^PSC' '${stats_txt}' | cut -f5); printf %.2f \"\$((10**2 * nHets / nNonRefHom))e-2\" > hethom_ratio.txt"
+  fi
 
   local snv_plot="${sample_id}.${ref_name}.small_variants.snv_distribution.png"
   local indel_plot="${sample_id}.${ref_name}.small_variants.indel_distribution.png"
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "grep -w '^ST' '${stats_txt}' | cut -f3,4 | awk -v OFS='\t' 'BEGIN {print \"type\", \"count\"} {print \$1, \$2}' > st.tsv; python3 /pipeline-scripts/plot_snvs.py st.tsv '${sample_id}.${ref_name}' '${snv_plot}'"
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "grep -w '^IDD' '${stats_txt}' | cut -f3,4 | awk -v OFS='\t' 'BEGIN {print \"length\", \"count\"} {print \$1, \$2}' > idd.tsv; python3 /pipeline-scripts/plot_indels.py idd.tsv '${sample_id}.${ref_name}' '${indel_plot}'"
+  if ! resume_available "${outdir}/${snv_plot}"; then
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "grep -w '^ST' '${stats_txt}' | cut -f3,4 | awk -v OFS='\t' 'BEGIN {print \"type\", \"count\"} {print \$1, \$2}' > st.tsv; python3 /pipeline-scripts/plot_snvs.py st.tsv '${sample_id}.${ref_name}' '${snv_plot}'"
+  fi
+  if ! resume_available "${outdir}/${indel_plot}"; then
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "grep -w '^IDD' '${stats_txt}' | cut -f3,4 | awk -v OFS='\t' 'BEGIN {print \"length\", \"count\"} {print \$1, \$2}' > idd.tsv; python3 /pipeline-scripts/plot_indels.py idd.tsv '${sample_id}.${ref_name}' '${indel_plot}'"
+  fi
 
   local roh_out="${sample_id}.${ref_name}.bcftools_roh.out"
   local roh_bed="${sample_id}.${ref_name}.bcftools_roh.bed"
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "bcftools roh --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --AF-dflt 0.4 '${vcf_base}' > '${roh_out}'"
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "python3 /pipeline-scripts/roh_bed.py '${roh_out}' '${BCFTOOLS_ROH_MIN_LENGTH}' '${BCFTOOLS_ROH_MIN_QUAL}' '${roh_bed}'; gzip -f '${roh_out}'"
+  if resume_available "${outdir}/${roh_out}.gz" "${outdir}/${roh_bed}"; then
+    log "[resume] bcftools roh: ${roh_bed} already present, skipping"
+  else
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "bcftools roh --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --AF-dflt 0.4 '${vcf_base}' > '${roh_out}'"
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "python3 /pipeline-scripts/roh_bed.py '${roh_out}' '${BCFTOOLS_ROH_MIN_LENGTH}' '${BCFTOOLS_ROH_MIN_QUAL}' '${roh_bed}'; gzip -f '${roh_out}'"
+  fi
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${outdir}/${stats_txt}" "${outdir}/${roh_out}.gz" "${outdir}/${roh_bed}" \
@@ -508,7 +589,11 @@ step_sv_stats() {
   local vcf_base
   vcf_base="$(basename "${vcf}")"
 
-  run_docker "${IMG_BASE}" "${outdir}" "bcftools --version
+  if resume_available "${outdir}/stat_DUP.txt" "${outdir}/stat_DEL.txt" "${outdir}/stat_INS.txt" \
+    "${outdir}/stat_INV.txt" "${outdir}/stat_BND.txt" "${outdir}/stat_SWAP.txt"; then
+    log "[resume] sv_stats: stats already present, skipping"
+  else
+    run_docker "${IMG_BASE}" "${outdir}" "bcftools --version
 bcftools query -f '%INFO/SVLEN\n' --include '(GT!=\"ref\" & GT!=\"./.\" & GT!=\".\") & FILTER=\"PASS\" & ABS(SVLEN)>=${SV_STATS_MIN_LENGTH} & SVTYPE=\"DUP\"' '${vcf_base}' > length_DUP.txt || : > length_DUP.txt
 wc --lines < length_DUP.txt > stat_DUP.txt
 bcftools query -f '%INFO/SVLEN\n' --include 'GT=\"alt\" & FILTER=\"PASS\" & ABS(SVLEN)>=${SV_STATS_MIN_LENGTH} & SVTYPE=\"DEL\" & STRLEN(ALT[0])<=${SV_STATS_MAX_SCAR_LENGTH}' '${vcf_base}' > length_DEL.txt || : > length_DEL.txt
@@ -519,10 +604,13 @@ bcftools view --no-header --include 'GT=\"alt\" & FILTER=\"PASS\" & ABS(SVLEN)>=
 bcftools query -f '%INFO/SVLEN\n' --include 'GT=\"alt\" & FILTER=\"PASS\" & SVTYPE=\"INV\"' '${vcf_base}' > length_INV.txt || : > length_INV.txt
 wc --lines < length_INV.txt > stat_INV.txt
 bcftools view --no-header --include 'GT=\"alt\" & FILTER=\"PASS\" & SVTYPE=\"BND\"' '${vcf_base}' | wc --lines > stat_BND.txt || echo 0 > stat_BND.txt"
+  fi
 
   local plot="${sample_id}.${ref_name}.sv_stats.png"
-  run_docker "${IMG_BASE}" "${outdir}" \
-    "python3 /pipeline-scripts/plot_sv_stats.py length_INS.txt length_DEL.txt length_DUP.txt length_INV.txt ${SV_STATS_MIN_LENGTH} '${sample_id}.${ref_name}' '${plot}'"
+  if ! resume_available "${outdir}/${plot}"; then
+    run_docker "${IMG_BASE}" "${outdir}" \
+      "python3 /pipeline-scripts/plot_sv_stats.py length_INS.txt length_DEL.txt length_DUP.txt length_INV.txt ${SV_STATS_MIN_LENGTH} '${sample_id}.${ref_name}' '${plot}'"
+  fi
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$(cat "${outdir}/stat_DUP.txt")" "$(cat "${outdir}/stat_DEL.txt")" "$(cat "${outdir}/stat_INS.txt")" \
@@ -542,8 +630,12 @@ step_methbat_pileup() {
   [[ "${METHBAT_SKIP_5HMC}" == "true" ]] && skip5hmc="--skip-5hmC"
   [[ "${METHBAT_SKIP_6MA}" == "true" ]] && skip6ma="--skip-6mA"
 
-  run_docker "${IMG_METHBAT}" "${outdir}" \
-    "touch messages.txt; methbat --version; methbat pileup --threads ${THREADS} --input-bam '$(basename "${haplotagged_bam}")' --min-mapq ${METHBAT_MIN_MAPQ} --min-coverage ${METHBAT_MIN_COVERAGE} --edge-trimming-size ${METHBAT_EDGE_TRIMMING_SIZE} --phase-set-min-fraction ${METHBAT_PHASE_SET_MIN_FRACTION} ${skip5mc} ${skip5hmc} ${skip6ma} --output-prefix '${out_prefix}' || echo 'MethBat pileup failed' >> messages.txt; echo 0 > '${out_prefix}.combined.bed.count'; echo 0 > '${out_prefix}.hap1.bed.count'; echo 0 > '${out_prefix}.hap2.bed.count'; if [ -f '${out_prefix}.5mC.bed.gz' ]; then zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c Total > '${out_prefix}.combined.bed.count' || true; zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c hap1 > '${out_prefix}.hap1.bed.count' || true; zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c hap2 > '${out_prefix}.hap2.bed.count' || true; fi"
+  if resume_available "${outdir}/messages.txt" "${outdir}/${out_prefix}.combined.bed.count" "${outdir}/${out_prefix}.hap1.bed.count" "${outdir}/${out_prefix}.hap2.bed.count"; then
+    log "[resume] methbat pileup: ${out_prefix} already present, skipping"
+  else
+    run_docker "${IMG_METHBAT}" "${outdir}" \
+      "touch messages.txt; methbat --version; methbat pileup --threads ${THREADS} --input-bam '$(basename "${haplotagged_bam}")' --min-mapq ${METHBAT_MIN_MAPQ} --min-coverage ${METHBAT_MIN_COVERAGE} --edge-trimming-size ${METHBAT_EDGE_TRIMMING_SIZE} --phase-set-min-fraction ${METHBAT_PHASE_SET_MIN_FRACTION} ${skip5mc} ${skip5hmc} ${skip6ma} --output-prefix '${out_prefix}' || echo 'MethBat pileup failed' >> messages.txt; echo 0 > '${out_prefix}.combined.bed.count'; echo 0 > '${out_prefix}.hap1.bed.count'; echo 0 > '${out_prefix}.hap2.bed.count'; if [ -f '${out_prefix}.5mC.bed.gz' ]; then zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c Total > '${out_prefix}.combined.bed.count' || true; zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c hap1 > '${out_prefix}.hap1.bed.count' || true; zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c hap2 > '${out_prefix}.hap2.bed.count' || true; fi"
+  fi
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${outdir}/${out_prefix}.5mC.bed.gz" "${outdir}/${out_prefix}.5mC.bed.gz.tbi" \
@@ -561,8 +653,12 @@ step_methbat_profile() {
   link_input "${region_tsv}" "${outdir}"
 
   local profile="${out_prefix}.methbat.profile.tsv"
-  run_docker "${IMG_METHBAT}" "${outdir}" \
-    "methbat --version; methbat profile --input-pileup '$(basename "${cpg_pileup_bed}")' --input-regions '$(basename "${region_tsv}")' --output-region-profile '${profile}'; awk '\$5==\"Methylated\" {print}' '${profile}' | wc -l > methylated_count.txt; awk '\$5==\"Unmethylated\" {print}' '${profile}' | wc -l > unmethylated_count.txt; awk '\$5==\"AlleleSpecificMethylation\" {print}' '${profile}' | wc -l > asm_count.txt"
+  if resume_available "${outdir}/${profile}" "${outdir}/methylated_count.txt" "${outdir}/unmethylated_count.txt" "${outdir}/asm_count.txt"; then
+    log "[resume] methbat profile: ${profile} already present, skipping"
+  else
+    run_docker "${IMG_METHBAT}" "${outdir}" \
+      "methbat --version; methbat profile --input-pileup '$(basename "${cpg_pileup_bed}")' --input-regions '$(basename "${region_tsv}")' --output-region-profile '${profile}'; awk '\$5==\"Methylated\" {print}' '${profile}' | wc -l > methylated_count.txt; awk '\$5==\"Unmethylated\" {print}' '${profile}' | wc -l > unmethylated_count.txt; awk '\$5==\"AlleleSpecificMethylation\" {print}' '${profile}' | wc -l > asm_count.txt"
+  fi
 
   printf '%s\t%s\t%s\t%s\n' "${outdir}/${profile}" \
     "$(cat "${outdir}/methylated_count.txt")" "$(cat "${outdir}/unmethylated_count.txt")" \
@@ -584,8 +680,12 @@ step_pbstarphase() {
   link_input "${ref_fasta}" "${outdir}"
   link_input "${ref_index}" "${outdir}"
 
-  run_docker "${IMG_PBSTARPHASE}" "${outdir}" \
-    "pbstarphase --version; pbstarphase diplotype --database /opt/pbstarphase_db.json.gz --reference '$(basename "${ref_fasta}")' --vcf '$(basename "${phased_small_vcf}")' --sv-vcf '$(basename "${phased_sv_vcf}")' --bam '$(basename "${aligned_bam}")' --output-calls '${out_prefix}.pbstarphase.json' --pharmcat-tsv '${out_prefix}.pbstarphase.tsv'"
+  if resume_available "${outdir}/${out_prefix}.pbstarphase.json" "${outdir}/${out_prefix}.pbstarphase.tsv"; then
+    log "[resume] pbstarphase: ${out_prefix}.pbstarphase.json already present, skipping"
+  else
+    run_docker "${IMG_PBSTARPHASE}" "${outdir}" \
+      "pbstarphase --version; pbstarphase diplotype --database /opt/pbstarphase_db.json.gz --reference '$(basename "${ref_fasta}")' --vcf '$(basename "${phased_small_vcf}")' --sv-vcf '$(basename "${phased_sv_vcf}")' --bam '$(basename "${aligned_bam}")' --output-calls '${out_prefix}.pbstarphase.json' --pharmcat-tsv '${out_prefix}.pbstarphase.tsv'"
+  fi
 
   printf '%s\t%s\n' "${outdir}/${out_prefix}.pbstarphase.json" "${outdir}/${out_prefix}.pbstarphase.tsv"
 }
@@ -600,14 +700,19 @@ step_glnexus() {
   local gvcfs=("$@")
   mkdir -p "${outdir}"
 
-  local g gvcf_list=""
-  for g in "${gvcfs[@]}"; do
-    link_input "${g}" "${outdir}"
-    link_input "${g}.tbi" "${outdir}"
-    gvcf_list+=" $(basename "${g}")"
-  done
+  local vcf="${cohort_id}.${ref_name}.small_variants.vcf.gz"
 
-  cat > "${outdir}/config.yml" <<'YAML'
+  if resume_available "${outdir}/${vcf}" "${outdir}/${vcf}.tbi"; then
+    log "[resume] GLnexus: ${vcf} already present, skipping"
+  else
+    local g gvcf_list=""
+    for g in "${gvcfs[@]}"; do
+      link_input "${g}" "${outdir}"
+      link_input "${g}.tbi" "${outdir}"
+      gvcf_list+=" $(basename "${g}")"
+    done
+
+    cat > "${outdir}/config.yml" <<'YAML'
 unifier_config:
   min_AQ1: 0
   min_AQ2: 0
@@ -655,10 +760,10 @@ genotyper_config:
       ignore_non_variants: true
 YAML
 
-  local bcf="${cohort_id}.${ref_name}.small_variants.bcf"
-  local vcf="${cohort_id}.${ref_name}.small_variants.vcf.gz"
-  run_docker "${IMG_GLNEXUS}" "${outdir}" \
-    "glnexus_cli --help 2>&1 | grep -Eo 'glnexus_cli release v[0-9a-f.-]+'; bcftools --version; glnexus_cli --threads ${THREADS} --mem-gbytes ${GLNEXUS_MEM_GB} --dir '${cohort_id}.${ref_name}.GLnexus.DB' --config ./config.yml${gvcf_list} > '${bcf}'; bcftools view --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --output-type z --output-file '${vcf}' '${bcf}'; bcftools index --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --tbi '${vcf}'; rm --recursive --force '${cohort_id}.${ref_name}.GLnexus.DB' '${bcf}'"
+    local bcf="${cohort_id}.${ref_name}.small_variants.bcf"
+    run_docker "${IMG_GLNEXUS}" "${outdir}" \
+      "glnexus_cli --help 2>&1 | grep -Eo 'glnexus_cli release v[0-9a-f.-]+'; bcftools --version; glnexus_cli --threads ${THREADS} --mem-gbytes ${GLNEXUS_MEM_GB} --dir '${cohort_id}.${ref_name}.GLnexus.DB' --config ./config.yml${gvcf_list} > '${bcf}'; bcftools view --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --output-type z --output-file '${vcf}' '${bcf}'; bcftools index --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --tbi '${vcf}'; rm --recursive --force --verbose '${cohort_id}.${ref_name}.GLnexus.DB' '${bcf}'"
+  fi
 
   printf '%s\t%s\n' "${outdir}/${vcf}" "${outdir}/${vcf}.tbi"
 }
@@ -670,16 +775,26 @@ step_split_vcf_by_sample() {
   shift 4
   local sample_ids=("$@")
   mkdir -p "${outdir}"
-  link_input "${vcf}" "${outdir}"
-  link_input "${vcf_index}" "${outdir}"
 
   local vcf_base
   vcf_base="$(basename "${vcf}")"
   local exclude_flag=""
   [[ "${exclude_uncalled}" == "true" ]] && exclude_flag="--exclude-uncalled"
 
-  local sid
+  local sid all_resumed=true
   for sid in "${sample_ids[@]}"; do
+    resume_available "${outdir}/${sid}.${vcf_base}" "${outdir}/${sid}.${vcf_base}.tbi" || all_resumed=false
+  done
+  if [[ "${all_resumed}" != "true" ]]; then
+    link_input "${vcf}" "${outdir}"
+    link_input "${vcf_index}" "${outdir}"
+  fi
+
+  for sid in "${sample_ids[@]}"; do
+    if resume_available "${outdir}/${sid}.${vcf_base}" "${outdir}/${sid}.${vcf_base}.tbi"; then
+      log "[resume] split_vcf_by_sample: ${sid}.${vcf_base} already present, skipping"
+      continue
+    fi
     run_docker "${IMG_BASE}" "${outdir}" \
       "bcftools --version; bcftools view --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --samples '${sid}' ${exclude_flag} --output-type z --output '${sid}.${vcf_base}' --write-index=tbi '${vcf_base}'"
   done

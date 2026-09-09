@@ -50,6 +50,7 @@ esac
 # Compute / resource parameters (uniform across every sample in the run)
 # ---------------------------------------------------------------------------
 : "${THREADS:=$(nproc 2>/dev/null || echo 8)}"
+: "${RESUME:=false}"                     # true to skip steps whose output already exists (see --resume)
 : "${USE_GPU:=false}"                    # true to use DeepVariant/Parabricks GPU path
 : "${USE_PARABRICKS_DEEPVARIANT:=false}" # true to use Parabricks instead of DeepVariant
 : "${USE_ALIGNMENT_CHUNKING:=false}"     # WDL scatters chunks across cloud nodes; this pipeline runs them sequentially on one node, so chunking only adds overhead here
@@ -109,7 +110,7 @@ export CONTAINER_REGISTRY REF_NAME IMG_REF_DATA
 export IMG_PBMM2 IMG_PBTK IMG_PBSAMOA IMG_BASE IMG_MOSDEPTH IMG_SAWFISH IMG_PARAPHASE \
   IMG_MITORSAW IMG_KIVVI IMG_HIPHASE IMG_TRGT IMG_PBJAM IMG_METHBAT IMG_PBSTARPHASE \
   IMG_GLNEXUS IMG_DEEPVARIANT_CPU IMG_DEEPVARIANT_GPU IMG_PARABRICKS
-export THREADS USE_GPU USE_PARABRICKS_DEEPVARIANT USE_ALIGNMENT_CHUNKING ALIGNMENT_CHUNKS \
+export THREADS RESUME USE_GPU USE_PARABRICKS_DEEPVARIANT USE_ALIGNMENT_CHUNKING ALIGNMENT_CHUNKS \
   GLNEXUS_MEM_GB MERGE_MEM_GB DEEPVARIANT_GVCF_OUTPUT \
   DEEPVARIANT_GPU_DOCKER_ARGS PARABRICKS_GPU_DOCKER_ARGS
 export PBMM2_MIN_LENGTH PBMM2_STRIP_KINETICS PBMM2_KEEP_UNMAPPED \

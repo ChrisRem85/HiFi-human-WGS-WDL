@@ -67,6 +67,27 @@ Outputs land in `$DATA_ROOT/results/<sample_id>/{upstream,downstream}/...`
 and, for family runs, `$DATA_ROOT/results/<family_id>.joint/...` — the same
 filenames (`<sample_id>.<ref_name>.<suffix>`) that the WDL tasks produce.
 
+### Resuming an interrupted or already-finished run
+
+By default, re-running `run_pipeline.sh` unconditionally re-runs and
+overwrites every step's output. Pass `--resume` (or set `RESUME=true`) to
+skip any step whose expected output file(s) already exist from a prior run:
+
+```bash
+bash_pipeline/run_pipeline.sh \
+  --manifest-dir "$DATA_ROOT/manifest" \
+  --data-root "$DATA_ROOT" \
+  --out "$DATA_ROOT/results" \
+  --mode family --resume
+```
+
+Each step checks its own final output(s) (e.g. the phased VCF + index for
+`hiphase`, the VCF + index for `sawfish call`/`GLnexus`) and is skipped only
+if every one of them already exists and is non-empty; otherwise it re-runs
+and overwrites as usual. This is a per-step check, not a whole-run
+checkpoint, so a run interrupted partway through a step will simply re-run
+that one step in full on resume.
+
 ### Overriding parameters
 
 Every knob in `config.sh` can be overridden via environment variable, e.g.:
@@ -112,3 +133,6 @@ sample in that run — there's no per-sample parameter drift.
   speedup — it therefore defaults to `USE_ALIGNMENT_CHUNKING=false` (single
   `pbmm2 align` pass per input BAM). Set it to `true` only if you also
   parallelize the chunk loop yourself.
+- `collect_manifest.sh` is not covered by `--resume`: it always re-unpacks
+  the reference bundle and re-validates/re-hashes every sample's BAM(s). This
+  is cheap relative to the analysis steps, so it isn't worth skipping.

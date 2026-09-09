@@ -31,6 +31,23 @@ assert_under_data_root() {
   esac
 }
 
+# resume_available <path...>
+# True only when RESUME=true and every given path already exists (files must
+# be non-empty; directories must be non-empty). Steps use this to skip work
+# whose output was already produced by an earlier, interrupted run.
+resume_available() {
+  [[ "${RESUME:-false}" == "true" ]] || return 1
+  local f
+  for f in "$@"; do
+    if [[ -d "${f}" ]]; then
+      [[ -n "$(ls -A "${f}" 2>/dev/null)" ]] || return 1
+    else
+      [[ -s "${f}" ]] || return 1
+    fi
+  done
+  return 0
+}
+
 # run_docker <image> <workdir> <command>
 # Runs a single command string inside <image>, with DATA_ROOT mounted 1:1 and
 # <workdir> (which must be under DATA_ROOT) as the container's cwd. The
