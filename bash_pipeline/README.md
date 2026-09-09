@@ -41,6 +41,58 @@ and **`steps.sh`** — a single source of truth used identically for every
 sample in a run, which is what guarantees identical output files and
 identical parameters across samples.
 
+## Tools
+
+Every tool below runs inside its own pinned Docker image (see `IMG_*` in
+`config.sh`); this is the same list of tools the WDL tasks in
+[workflows/](../workflows) invoke. See [docs/tools.md](../docs/tools.md) and
+[docs/tools_containers.md](../docs/tools_containers.md) for full version and
+container details.
+
+- **pbindex** (`pbtk`) — indexes an unaligned HiFi reads BAM so `pbmm2` can
+  scatter it into chunks; only used when `USE_ALIGNMENT_CHUNKING=true`.
+- **pbmm2** — PacBio's `minimap2`-based aligner tuned for HiFi reads; indexes
+  the reference and aligns each input BAM to it.
+- **pbsamoa** — merges multiple per-movie aligned BAMs for a sample into a
+  single sorted, indexed BAM (only run when a sample has >1 input BAM).
+- **mosdepth** — computes per-region depth from the aligned BAM, used for
+  mean coverage and chrY-based sex inference.
+- **DeepVariant** — deep-learning small variant (SNV/indel) caller; run
+  either on CPU, on GPU (`USE_GPU=true`), or via NVIDIA **Parabricks**
+  (`USE_PARABRICKS_DEEPVARIANT=true`) for GPU-accelerated calling.
+- **sawfish** — structural variant and copy-number discovery/calling;
+  `sawfish discover` runs per sample, then `sawfish joint-call` merges one or
+  more samples' discover output into a genotyped SV VCF (a single sample for
+  `--mode singleton`, the whole family for `--mode family`).
+- **sawshark** — post-processes `sawfish joint-call` output into the final
+  genotyped SV VCF.
+- **paraphase** — paralog-aware variant calling for genes with high sequence
+  similarity (e.g. _SMN1_/_SMN2_, _PMS2_/_PMS2CL_); uses `minimap2`
+  internally for realignment.
+- **mitorsaw** — mitochondrial haplotype variant caller and haplotype
+  statistics.
+- **kivvi** — targeted genotyping for the KIV2 (_LPA_) and D4Z4 (FSHD)
+  repeat regions.
+- **GLnexus** — joint genotyper that merges per-sample GVCFs into a
+  family-level small-variant callset (`--mode family` only).
+- **HiPhase** — haplotype-phases small variants and SVs together and
+  haplotags the aligned BAM.
+- **TRGT** — targeted tandem repeat genotyper; also reports repeat
+  "dropouts" (regions with insufficient haplotype coverage) via its bundled
+  `find_trgt_dropouts.py`.
+- **pbjam** — computes HiFi read/alignment QC statistics (read length,
+  quality, mapped %, etc.) and length/quality distribution plots.
+- **bcftools** — used throughout for VCF manipulation: small-variant
+  stats/plots, runs-of-homozygosity (`bcftools roh`) detection, and SV
+  summary stats (counts/length distributions by SV type).
+- **samtools** — used throughout for BAM indexing/sorting (e.g. TRGT's
+  spanning-reads BAM) and header inspection.
+- **MethBat** — 5mC/5hmC methylation pileup (`methbat pileup`) from the
+  haplotagged BAM, and region-level methylation profiling (`methbat
+  profile`).
+- **StarPhase** (`pbstarphase`) — HLA typing and pharmacogenomic (PGx)
+  diplotype calling from the phased small-variant/SV VCFs and aligned BAM.
+
 ## Usage
 
 ```bash
