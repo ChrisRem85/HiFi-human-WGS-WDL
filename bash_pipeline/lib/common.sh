@@ -73,5 +73,8 @@ run_docker_gpu() {
 link_input() {
   local target="$1" dir="$2"
   mkdir -p "${dir}"
-  ln --symbolic --force --verbose "$(cd "$(dirname "${target}")" && pwd)/$(basename "${target}")" "${dir}/"
+  # No --verbose: this function's stdout must stay silent because callers
+  # like step_pbmm2_align/step_mosdepth/etc. are invoked as "$(step_xxx ...)",
+  # and any extra stdout here would corrupt their tab-separated return value.
+  ln --symbolic --force "$(cd "$(dirname "${target}")" && pwd)/$(basename "${target}")" "${dir}/"
 }

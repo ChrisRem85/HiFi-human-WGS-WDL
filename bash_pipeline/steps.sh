@@ -118,9 +118,9 @@ step_mosdepth() {
   local region_bed="${sample_id}.${ref_name}.mosdepth.regions.bed.gz"
   local region_bed_index="${sample_id}.${ref_name}.mosdepth.regions.bed.gz.csi"
   if [[ ! -f "${outdir}/${summary}" ]]; then
-    mv --verbose "${outdir}/${out_prefix}.mosdepth.summary.txt" "${outdir}/${summary}"
-    mv --verbose "${outdir}/${out_prefix}.regions.bed.gz" "${outdir}/${region_bed}"
-    mv --verbose "${outdir}/${out_prefix}.regions.bed.gz.csi" "${outdir}/${region_bed_index}"
+    mv "${outdir}/${out_prefix}.mosdepth.summary.txt" "${outdir}/${summary}"
+    mv "${outdir}/${out_prefix}.regions.bed.gz" "${outdir}/${region_bed}"
+    mv "${outdir}/${out_prefix}.regions.bed.gz.csi" "${outdir}/${region_bed_index}"
   fi
 
   local plot="${sample_id}.${ref_name}.mosdepth.depth_distribution.png"
@@ -175,10 +175,10 @@ step_deepvariant() {
       "${PARABRICKS_GPU_DOCKER_ARGS}"
     if [[ "${DEEPVARIANT_GVCF_OUTPUT}" == "true" ]]; then
       run_docker "${IMG_BASE}" "${outdir}" \
-        "bcftools view --output-type z --output-file '${gvcf}' '${raw_gvcf}'; bcftools index --tbi --force '${gvcf}'; rm --verbose '${raw_gvcf}'"
+        "bcftools view --output-type z --output-file '${gvcf}' '${raw_gvcf}'; bcftools index --tbi --force '${gvcf}'; rm '${raw_gvcf}'"
     fi
     run_docker "${IMG_BASE}" "${outdir}" \
-      "bcftools view --exclude-uncalled --output-type z --output-file '${vcf}' '${raw_vcf}'; bcftools index --tbi --force '${vcf}'; rm --verbose '${raw_vcf}'"
+      "bcftools view --exclude-uncalled --output-type z --output-file '${vcf}' '${raw_vcf}'; bcftools index --tbi --force '${vcf}'; rm '${raw_vcf}'"
   elif [[ "${USE_GPU}" == "true" ]]; then
     # DeepVariant GPU path, without Parabricks
     run_docker_gpu "${IMG_DEEPVARIANT_GPU}" "${outdir}" \
@@ -260,7 +260,7 @@ step_sawfish_call() {
   run_docker "${IMG_SAWFISH}" "${outdir}" \
     "sawshark --threads $(( THREADS / 2 > 0 ? THREADS / 2 : 1 )) --vcf '${out_prefix}/genotyped.sv.vcf.gz' | bcftools view - --output-type z --write-index=tbi --output '${out_prefix}.vcf.gz'"
 
-  mv --verbose "${outdir}/${out_prefix}/supporting_reads.json.gz" "${outdir}/${out_prefix}.supporting_reads.json.gz" 2>/dev/null || true
+  mv "${outdir}/${out_prefix}/supporting_reads.json.gz" "${outdir}/${out_prefix}.supporting_reads.json.gz" 2>/dev/null || true
 
   for i in "${!sample_ids[@]}"; do
     local sid="${sample_ids[$i]}" prefix
@@ -272,10 +272,10 @@ step_sawfish_call() {
     local sampledir
     sampledir="$(find "${outdir}/${out_prefix}/samples" -maxdepth 1 -type d -name "sample????_${sid}" | head -n1)"
     if [[ -n "${sampledir}" ]]; then
-      mv --verbose "${sampledir}/copynum.bedgraph" "${outdir}/${prefix}.copynum.bedgraph"
-      mv --verbose "${sampledir}/depth.bw" "${outdir}/${prefix}.depth.bw"
-      mv --verbose "${sampledir}/gc_bias_corrected_depth.bw" "${outdir}/${prefix}.gc_bias_corrected_depth.bw"
-      mv --verbose "${sampledir}/copynum.summary.json" "${outdir}/${prefix}.copynum.summary.json"
+      mv "${sampledir}/copynum.bedgraph" "${outdir}/${prefix}.copynum.bedgraph"
+      mv "${sampledir}/depth.bw" "${outdir}/${prefix}.depth.bw"
+      mv "${sampledir}/gc_bias_corrected_depth.bw" "${outdir}/${prefix}.gc_bias_corrected_depth.bw"
+      mv "${sampledir}/copynum.summary.json" "${outdir}/${prefix}.copynum.summary.json"
     fi
   done
   for sid in "${sample_ids[@]}"; do rm --recursive --force "${outdir}/${sid}"; done
@@ -297,7 +297,7 @@ step_paraphase() {
   link_input "${ref_index}" "${outdir}"
 
   run_docker "${IMG_PARAPHASE}" "${outdir}" \
-    "paraphase --version; paraphase --threads ${THREADS} --bam '$(basename "${aligned_bam}")' --reference '$(basename "${ref_fasta}")' --genome '${genome_build}' --out ./ 2>&1 | tee paraphase.log || echo 'Paraphase failed for sample ${sample_id}' >> messages.txt; if ls '${sample_id}_paraphase_vcfs'/*.vcf &> /dev/null; then tar --gzip --create --verbose --file '${sample_id}.paraphase_vcfs.tar.gz' '${sample_id}_paraphase_vcfs'/*.vcf; fi"
+    "paraphase --version; paraphase --threads ${THREADS} --bam '$(basename "${aligned_bam}")' --reference '$(basename "${ref_fasta}")' --genome '${genome_build}' --out ./ 2>&1 | tee paraphase.log || echo 'Paraphase failed for sample ${sample_id}' >> messages.txt; if ls '${sample_id}_paraphase_vcfs'/*.vcf &> /dev/null; then tar --gzip --create --file '${sample_id}.paraphase_vcfs.tar.gz' '${sample_id}_paraphase_vcfs'/*.vcf; fi"
 
   printf '%s\t%s\t%s\t%s\n' \
     "${outdir}/${sample_id}.paraphase.json" "${outdir}/${sample_id}.paraphase.bam" \
@@ -443,7 +443,7 @@ step_pbjam_bam_stats() {
 
   local json="${sample_id}.${ref_name}.pbjam.json"
   run_docker "${IMG_PBJAM}" "${outdir}" \
-    "pbjam bam-stats --threads ${THREADS} --include-unmapped --input-bam '$(basename "${bam}")' --output-json '${json}' --plot-label '${sample_id}.${ref_name}' --image-prefix '${sample_id}.${ref_name}'; mv --verbose '${sample_id}.${ref_name}.read_length_distribution.png' '${sample_id}.read_length_distribution.png'; mv --verbose '${sample_id}.${ref_name}.read_quality_distribution.png' '${sample_id}.read_quality_distribution.png'"
+    "pbjam bam-stats --threads ${THREADS} --include-unmapped --input-bam '$(basename "${bam}")' --output-json '${json}' --plot-label '${sample_id}.${ref_name}' --image-prefix '${sample_id}.${ref_name}'; mv '${sample_id}.${ref_name}.read_length_distribution.png' '${sample_id}.read_length_distribution.png'; mv '${sample_id}.${ref_name}.read_quality_distribution.png' '${sample_id}.read_quality_distribution.png'"
 
   local key val results=()
   for key in read_count read_length_mean read_length_median read_length_n50 \
@@ -658,7 +658,7 @@ YAML
   local bcf="${cohort_id}.${ref_name}.small_variants.bcf"
   local vcf="${cohort_id}.${ref_name}.small_variants.vcf.gz"
   run_docker "${IMG_GLNEXUS}" "${outdir}" \
-    "glnexus_cli --help 2>&1 | grep -Eo 'glnexus_cli release v[0-9a-f.-]+'; bcftools --version; glnexus_cli --threads ${THREADS} --mem-gbytes ${GLNEXUS_MEM_GB} --dir '${cohort_id}.${ref_name}.GLnexus.DB' --config ./config.yml${gvcf_list} > '${bcf}'; bcftools view --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --output-type z --output-file '${vcf}' '${bcf}'; bcftools index --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --tbi '${vcf}'; rm --recursive --force --verbose '${cohort_id}.${ref_name}.GLnexus.DB' '${bcf}'"
+    "glnexus_cli --help 2>&1 | grep -Eo 'glnexus_cli release v[0-9a-f.-]+'; bcftools --version; glnexus_cli --threads ${THREADS} --mem-gbytes ${GLNEXUS_MEM_GB} --dir '${cohort_id}.${ref_name}.GLnexus.DB' --config ./config.yml${gvcf_list} > '${bcf}'; bcftools view --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --output-type z --output-file '${vcf}' '${bcf}'; bcftools index --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --tbi '${vcf}'; rm --recursive --force '${cohort_id}.${ref_name}.GLnexus.DB' '${bcf}'"
 
   printf '%s\t%s\n' "${outdir}/${vcf}" "${outdir}/${vcf}.tbi"
 }
