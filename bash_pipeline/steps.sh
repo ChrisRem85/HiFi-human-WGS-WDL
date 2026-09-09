@@ -29,7 +29,7 @@ step_pbmm2_align() {
   if [[ ! -f "${idx_dir}/${mmi}" ]]; then
     link_input "${ref_fasta}" "${idx_dir}"
     run_docker "${IMG_PBMM2}" "${idx_dir}" \
-      "pbmm2 --version; pbmm2 index --num-threads ${THREADS} --log-level INFO --preset HIFI '${ref_base}' '${mmi}'"
+      "pbmm2 --version >&2; pbmm2 index --num-threads ${THREADS} --log-level INFO --preset HIFI '${ref_base}' '${mmi}'"
   fi
   local pbmm2_index="${idx_dir}/${mmi}"
 
@@ -52,7 +52,7 @@ step_pbmm2_align() {
     if [[ "${USE_ALIGNMENT_CHUNKING}" == "true" && "${is_aligned}" == "0" ]]; then
       if ! resume_available "${work}/${bam_base}.pbi"; then
         run_docker "${IMG_PBTK}" "${work}" \
-          "pbindex --version; pbindex --num-threads ${THREADS} '${bam_base}'"
+          "pbindex --version >&2; pbindex --num-threads ${THREADS} '${bam_base}'"
       fi
       num_chunks="${ALIGNMENT_CHUNKS}"
     fi
@@ -67,7 +67,7 @@ step_pbmm2_align() {
         log "[resume] pbmm2 align: ${out_bam} already present, skipping"
       else
         run_docker "${IMG_PBMM2}" "${work}" \
-          "pbmm2 --version; pbmm2 align --num-threads ${THREADS} --sort-memory 4G --preset HIFI --sample '${sample_id}' --log-level INFO --sort --strip-tags HP,PS,PC ${strip_flag} ${unmapped_flag} --min-length ${PBMM2_MIN_LENGTH} '${mmi}' '${bam_base}' '${out_bam}'"
+          "pbmm2 --version >&2; pbmm2 align --num-threads ${THREADS} --sort-memory 4G --preset HIFI --sample '${sample_id}' --log-level INFO --sort --strip-tags HP,PS,PC ${strip_flag} ${unmapped_flag} --min-length ${PBMM2_MIN_LENGTH} '${mmi}' '${bam_base}' '${out_bam}'"
       fi
       aligned_bams+=("${work}/${out_bam}")
     else
@@ -78,7 +78,7 @@ step_pbmm2_align() {
           log "[resume] pbmm2 align: ${out_bam} already present, skipping"
         else
           run_docker "${IMG_PBMM2}" "${work}" \
-            "pbmm2 --version; pbmm2 align --num-threads ${THREADS} --sort-memory 4G --preset HIFI --sample '${sample_id}' --log-level INFO --sort --strip-tags HP,PS,PC ${strip_flag} ${unmapped_flag} --min-length ${PBMM2_MIN_LENGTH} --chunk '${c}/${num_chunks}' --chunk-mode scatter '${mmi}' '${bam_base}' '${out_bam}'"
+            "pbmm2 --version >&2; pbmm2 align --num-threads ${THREADS} --sort-memory 4G --preset HIFI --sample '${sample_id}' --log-level INFO --sort --strip-tags HP,PS,PC ${strip_flag} ${unmapped_flag} --min-length ${PBMM2_MIN_LENGTH} --chunk '${c}/${num_chunks}' --chunk-mode scatter '${mmi}' '${bam_base}' '${out_bam}'"
         fi
         aligned_bams+=("${work}/${out_bam}")
       done
@@ -132,7 +132,7 @@ step_mosdepth() {
     log "[resume] mosdepth: ${summary} already present, skipping"
   else
     run_docker "${IMG_MOSDEPTH}" "${outdir}" \
-      "mosdepth --version; mosdepth --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --by 500 --no-per-base --use-median '${out_prefix}' '${bam_base}'"
+      "mosdepth --version >&2; mosdepth --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --by 500 --no-per-base --use-median '${out_prefix}' '${bam_base}'"
 
     if [[ ! -f "${outdir}/${summary}" ]]; then
       mv --verbose "${outdir}/${out_prefix}.mosdepth.summary.txt" "${outdir}/${summary}"
@@ -249,7 +249,7 @@ step_sawfish_discover() {
     log "[resume] sawfish discover: ${out_prefix} already present, skipping"
   else
     run_docker "${IMG_SAWFISH}" "${outdir}" \
-      "sawfish --version; sawfish discover --threads ${THREADS} --disable-path-canonicalization --ref '$(basename "${ref_fasta}")' --bam '$(basename "${aligned_bam}")' --expected-cn '$(basename "${expected_bed}")' --cnv-excluded-regions '$(basename "${exclude_bed}")' --output-dir '${out_prefix}'"
+      "sawfish --version >&2; sawfish discover --threads ${THREADS} --disable-path-canonicalization --ref '$(basename "${ref_fasta}")' --bam '$(basename "${aligned_bam}")' --expected-cn '$(basename "${expected_bed}")' --cnv-excluded-regions '$(basename "${exclude_bed}")' --output-dir '${out_prefix}'"
   fi
 
   printf '%s\n' "${outdir}/${out_prefix}"
@@ -294,7 +294,7 @@ step_sawfish_call() {
     done
 
     run_docker "${IMG_SAWFISH}" "${outdir}" \
-      "sawfish --version; sawfish joint-call --threads ${THREADS} --report-supporting-reads${samples_flags} --output-dir '${out_prefix}'"
+      "sawfish --version >&2; sawfish joint-call --threads ${THREADS} --report-supporting-reads${samples_flags} --output-dir '${out_prefix}'"
 
     run_docker "${IMG_SAWFISH}" "${outdir}" \
       "sawshark --threads $(( THREADS / 2 > 0 ? THREADS / 2 : 1 )) --vcf '${out_prefix}/genotyped.sv.vcf.gz' | bcftools view - --output-type z --write-index=tbi --output '${out_prefix}.vcf.gz'"
@@ -340,7 +340,7 @@ step_paraphase() {
     log "[resume] paraphase: ${sample_id}.paraphase.json already present, skipping"
   else
     run_docker "${IMG_PARAPHASE}" "${outdir}" \
-      "paraphase --version; paraphase --threads ${THREADS} --bam '$(basename "${aligned_bam}")' --reference '$(basename "${ref_fasta}")' --genome '${genome_build}' --out ./ 2>&1 | tee paraphase.log || echo 'Paraphase failed for sample ${sample_id}' >> messages.txt; if ls '${sample_id}_paraphase_vcfs'/*.vcf &> /dev/null; then tar --gzip --create --verbose --file '${sample_id}.paraphase_vcfs.tar.gz' '${sample_id}_paraphase_vcfs'/*.vcf; fi"
+      "paraphase --version >&2; paraphase --threads ${THREADS} --bam '$(basename "${aligned_bam}")' --reference '$(basename "${ref_fasta}")' --genome '${genome_build}' --out ./ 2>&1 | tee paraphase.log || echo 'Paraphase failed for sample ${sample_id}' >> messages.txt; if ls '${sample_id}_paraphase_vcfs'/*.vcf &> /dev/null; then tar --gzip --create --file '${sample_id}.paraphase_vcfs.tar.gz' '${sample_id}_paraphase_vcfs'/*.vcf; fi"
   fi
 
   printf '%s\t%s\t%s\t%s\n' \
@@ -361,7 +361,7 @@ step_mitorsaw() {
     log "[resume] mitorsaw: ${out_prefix}.mitorsaw.vcf.gz already present, skipping"
   else
     run_docker "${IMG_MITORSAW}" "${outdir}" \
-      "mitorsaw --version; mitorsaw haplotype --reference '$(basename "${ref_fasta}")' --bam '$(basename "${aligned_bam}")' --output-vcf '${out_prefix}.mitorsaw.vcf.gz' --output-hap-stats '${out_prefix}.mitorsaw.json'"
+      "mitorsaw --version >&2; mitorsaw haplotype --reference '$(basename "${ref_fasta}")' --bam '$(basename "${aligned_bam}")' --output-vcf '${out_prefix}.mitorsaw.vcf.gz' --output-hap-stats '${out_prefix}.mitorsaw.json'"
   fi
 
   printf '%s\t%s\t%s\n' "${outdir}/${out_prefix}.mitorsaw.vcf.gz" "${outdir}/${out_prefix}.mitorsaw.vcf.gz.tbi" \
@@ -379,7 +379,7 @@ step_kivvi() {
     log "[resume] kivvi ${mode}: messages.txt already present, skipping"
   else
     run_docker "${IMG_KIVVI}" "${outdir}" \
-      "touch messages.txt; kivvi --version; kivvi --bam '$(basename "${aligned_bam}")' --out . --prefix '${out_prefix}' ${mode} || echo 'kivvi ${mode} failed, presumably due to low coverage.' >> messages.txt; if [ -f '${out_prefix}.kivvi.${mode}.vcf' ]; then bgzip '${out_prefix}.kivvi.${mode}.vcf'; tabix --preset vcf '${out_prefix}.kivvi.${mode}.vcf.gz'; fi"
+      "touch messages.txt; kivvi --version >&2; kivvi --bam '$(basename "${aligned_bam}")' --out . --prefix '${out_prefix}' ${mode} || echo 'kivvi ${mode} failed, presumably due to low coverage.' >> messages.txt; if [ -f '${out_prefix}.kivvi.${mode}.vcf' ]; then bgzip '${out_prefix}.kivvi.${mode}.vcf'; tabix --preset vcf '${out_prefix}.kivvi.${mode}.vcf.gz'; fi"
   fi
 
   printf '%s\t%s\n' "${outdir}/${out_prefix}.kivvi.${mode}.vcf.gz" "${outdir}/${out_prefix}.kivvi.${mode}.vcf.gz.tbi"
@@ -423,7 +423,7 @@ step_hiphase() {
     log "[resume] hiphase: ${haplotagged_bam} already present, skipping"
   else
     run_docker "${IMG_HIPHASE}" "${outdir}" \
-      "hiphase --version; hiphase --threads ${THREADS}${opt_flags} --sample-name '${sample_id}' --vcf '$(basename "${small_variant_vcf}")' --vcf '$(basename "${sv_vcf}")' --output-vcf '${phased_small_vcf}' --output-vcf '${phased_sv_vcf}' --bam '$(basename "${aligned_bam}")' --output-bam '${haplotagged_bam}' --reference '$(basename "${ref_fasta}")' --summary-file '${stats}' --blocks-file '${blocks}' --haplotag-file '${sample_id}.${ref_name}.hiphase.haplotags.tsv'; gzip '${sample_id}.${ref_name}.hiphase.haplotags.tsv'"
+      "hiphase --version >&2; hiphase --threads ${THREADS}${opt_flags} --sample-name '${sample_id}' --vcf '$(basename "${small_variant_vcf}")' --vcf '$(basename "${sv_vcf}")' --output-vcf '${phased_small_vcf}' --output-vcf '${phased_sv_vcf}' --bam '$(basename "${aligned_bam}")' --output-bam '${haplotagged_bam}' --reference '$(basename "${ref_fasta}")' --summary-file '${stats}' --blocks-file '${blocks}' --haplotag-file '${sample_id}.${ref_name}.hiphase.haplotags.tsv'; gzip '${sample_id}.${ref_name}.hiphase.haplotags.tsv'"
   fi
 
   if ! resume_available "${outdir}/${haplotagged_bam}.bai"; then
@@ -472,7 +472,7 @@ step_trgt() {
     log "[resume] trgt genotype: ${out_prefix}.trgt.sorted.vcf.gz already present, skipping"
   else
     run_docker "${IMG_TRGT}" "${outdir}" \
-      "trgt --version; trgt genotype --threads ${THREADS} --karyotype '${karyotype}' --genome '$(basename "${ref_fasta}")' --repeats '$(basename "${trgt_bed}")' --reads '$(basename "${aligned_bam}")' --max-depth ${TRGT_MAX_DEPTH} --min-read-quality=${TRGT_MIN_READ_QUALITY} --output-prefix '${out_prefix}.trgt'"
+      "trgt --version >&2; trgt genotype --threads ${THREADS} --karyotype '${karyotype}' --genome '$(basename "${ref_fasta}")' --repeats '$(basename "${trgt_bed}")' --reads '$(basename "${aligned_bam}")' --max-depth ${TRGT_MAX_DEPTH} --min-read-quality=${TRGT_MIN_READ_QUALITY} --output-prefix '${out_prefix}.trgt'"
 
     run_docker "${IMG_TRGT}" "${outdir}" \
       "bcftools sort --output-type z --output '${out_prefix}.trgt.sorted.vcf.gz' --write-index=tbi '${out_prefix}.trgt.vcf.gz'"
@@ -545,7 +545,7 @@ step_bcftools_stats_roh() {
     log "[resume] bcftools stats: ${stats_txt} already present, skipping"
   else
     run_docker "${IMG_BASE}" "${outdir}" \
-      "bcftools --version; bcftools norm --fasta-ref '${ref_base}' --multiallelics - '${vcf_base}' 2>/dev/null | bcftools view --apply-filters .,PASS --exclude 'GQ<20.0 || GT=\"ref\" || GT=\"mis\" || ALT=\".\"' --trim-alt-alleles - | bcftools stats --samples '${sample_id}' --fasta-ref '${ref_base}' - > '${stats_txt}'"
+      "bcftools --version >&2; bcftools norm --fasta-ref '${ref_base}' --multiallelics - '${vcf_base}' 2>/dev/null | bcftools view --apply-filters .,PASS --exclude 'GQ<20.0 || GT=\"ref\" || GT=\"mis\" || ALT=\".\"' --trim-alt-alleles - | bcftools stats --samples '${sample_id}' --fasta-ref '${ref_base}' - > '${stats_txt}'"
 
     run_docker "${IMG_BASE}" "${outdir}" \
       "grep -w '^SN' '${stats_txt}' | grep 'number of SNPs:' | cut -f4 > snv_count.txt; grep -w '^SN' '${stats_txt}' | grep 'number of indels:' | cut -f4 > indel_count.txt; grep -w '^TSTV' '${stats_txt}' | cut -f5 > tstv_ratio.txt; nHets=\$(grep -w '^PSC' '${stats_txt}' | cut -f6); nNonRefHom=\$(grep -w '^PSC' '${stats_txt}' | cut -f5); printf %.2f \"\$((10**2 * nHets / nNonRefHom))e-2\" > hethom_ratio.txt"
@@ -634,7 +634,7 @@ step_methbat_pileup() {
     log "[resume] methbat pileup: ${out_prefix} already present, skipping"
   else
     run_docker "${IMG_METHBAT}" "${outdir}" \
-      "touch messages.txt; methbat --version; methbat pileup --threads ${THREADS} --input-bam '$(basename "${haplotagged_bam}")' --min-mapq ${METHBAT_MIN_MAPQ} --min-coverage ${METHBAT_MIN_COVERAGE} --edge-trimming-size ${METHBAT_EDGE_TRIMMING_SIZE} --phase-set-min-fraction ${METHBAT_PHASE_SET_MIN_FRACTION} ${skip5mc} ${skip5hmc} ${skip6ma} --output-prefix '${out_prefix}' || echo 'MethBat pileup failed' >> messages.txt; echo 0 > '${out_prefix}.combined.bed.count'; echo 0 > '${out_prefix}.hap1.bed.count'; echo 0 > '${out_prefix}.hap2.bed.count'; if [ -f '${out_prefix}.5mC.bed.gz' ]; then zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c Total > '${out_prefix}.combined.bed.count' || true; zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c hap1 > '${out_prefix}.hap1.bed.count' || true; zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c hap2 > '${out_prefix}.hap2.bed.count' || true; fi"
+      "touch messages.txt; methbat --version >&2; methbat pileup --threads ${THREADS} --input-bam '$(basename "${haplotagged_bam}")' --min-mapq ${METHBAT_MIN_MAPQ} --min-coverage ${METHBAT_MIN_COVERAGE} --edge-trimming-size ${METHBAT_EDGE_TRIMMING_SIZE} --phase-set-min-fraction ${METHBAT_PHASE_SET_MIN_FRACTION} ${skip5mc} ${skip5hmc} ${skip6ma} --output-prefix '${out_prefix}' || echo 'MethBat pileup failed' >> messages.txt; echo 0 > '${out_prefix}.combined.bed.count'; echo 0 > '${out_prefix}.hap1.bed.count'; echo 0 > '${out_prefix}.hap2.bed.count'; if [ -f '${out_prefix}.5mC.bed.gz' ]; then zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c Total > '${out_prefix}.combined.bed.count' || true; zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c hap1 > '${out_prefix}.hap1.bed.count' || true; zgrep -v '^#' '${out_prefix}.5mC.bed.gz' | grep -c hap2 > '${out_prefix}.hap2.bed.count' || true; fi"
   fi
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -657,7 +657,7 @@ step_methbat_profile() {
     log "[resume] methbat profile: ${profile} already present, skipping"
   else
     run_docker "${IMG_METHBAT}" "${outdir}" \
-      "methbat --version; methbat profile --input-pileup '$(basename "${cpg_pileup_bed}")' --input-regions '$(basename "${region_tsv}")' --output-region-profile '${profile}'; awk '\$5==\"Methylated\" {print}' '${profile}' | wc -l > methylated_count.txt; awk '\$5==\"Unmethylated\" {print}' '${profile}' | wc -l > unmethylated_count.txt; awk '\$5==\"AlleleSpecificMethylation\" {print}' '${profile}' | wc -l > asm_count.txt"
+      "methbat --version >&2; methbat profile --input-pileup '$(basename "${cpg_pileup_bed}")' --input-regions '$(basename "${region_tsv}")' --output-region-profile '${profile}'; awk '\$5==\"Methylated\" {print}' '${profile}' | wc -l > methylated_count.txt; awk '\$5==\"Unmethylated\" {print}' '${profile}' | wc -l > unmethylated_count.txt; awk '\$5==\"AlleleSpecificMethylation\" {print}' '${profile}' | wc -l > asm_count.txt"
   fi
 
   printf '%s\t%s\t%s\t%s\n' "${outdir}/${profile}" \
@@ -684,7 +684,7 @@ step_pbstarphase() {
     log "[resume] pbstarphase: ${out_prefix}.pbstarphase.json already present, skipping"
   else
     run_docker "${IMG_PBSTARPHASE}" "${outdir}" \
-      "pbstarphase --version; pbstarphase diplotype --database /opt/pbstarphase_db.json.gz --reference '$(basename "${ref_fasta}")' --vcf '$(basename "${phased_small_vcf}")' --sv-vcf '$(basename "${phased_sv_vcf}")' --bam '$(basename "${aligned_bam}")' --output-calls '${out_prefix}.pbstarphase.json' --pharmcat-tsv '${out_prefix}.pbstarphase.tsv'"
+      "pbstarphase --version >&2; pbstarphase diplotype --database /opt/pbstarphase_db.json.gz --reference '$(basename "${ref_fasta}")' --vcf '$(basename "${phased_small_vcf}")' --sv-vcf '$(basename "${phased_sv_vcf}")' --bam '$(basename "${aligned_bam}")' --output-calls '${out_prefix}.pbstarphase.json' --pharmcat-tsv '${out_prefix}.pbstarphase.tsv'"
   fi
 
   printf '%s\t%s\n' "${outdir}/${out_prefix}.pbstarphase.json" "${outdir}/${out_prefix}.pbstarphase.tsv"
@@ -762,7 +762,7 @@ YAML
 
     local bcf="${cohort_id}.${ref_name}.small_variants.bcf"
     run_docker "${IMG_GLNEXUS}" "${outdir}" \
-      "glnexus_cli --help 2>&1 | grep -Eo 'glnexus_cli release v[0-9a-f.-]+'; bcftools --version; glnexus_cli --threads ${THREADS} --mem-gbytes ${GLNEXUS_MEM_GB} --dir '${cohort_id}.${ref_name}.GLnexus.DB' --config ./config.yml${gvcf_list} > '${bcf}'; bcftools view --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --output-type z --output-file '${vcf}' '${bcf}'; bcftools index --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --tbi '${vcf}'; rm --recursive --force --verbose '${cohort_id}.${ref_name}.GLnexus.DB' '${bcf}'"
+      "glnexus_cli --help 2>&1 | grep -Eo 'glnexus_cli release v[0-9a-f.-]+' >&2; bcftools --version >&2; glnexus_cli --threads ${THREADS} --mem-gbytes ${GLNEXUS_MEM_GB} --dir '${cohort_id}.${ref_name}.GLnexus.DB' --config ./config.yml${gvcf_list} > '${bcf}'; bcftools view --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --output-type z --output-file '${vcf}' '${bcf}'; bcftools index --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --tbi '${vcf}'; rm --recursive --force '${cohort_id}.${ref_name}.GLnexus.DB' '${bcf}'"
   fi
 
   printf '%s\t%s\n' "${outdir}/${vcf}" "${outdir}/${vcf}.tbi"
@@ -796,6 +796,6 @@ step_split_vcf_by_sample() {
       continue
     fi
     run_docker "${IMG_BASE}" "${outdir}" \
-      "bcftools --version; bcftools view --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --samples '${sid}' ${exclude_flag} --output-type z --output '${sid}.${vcf_base}' --write-index=tbi '${vcf_base}'"
+      "bcftools --version >&2; bcftools view --threads $(( THREADS > 1 ? THREADS - 1 : 0 )) --samples '${sid}' ${exclude_flag} --output-type z --output '${sid}.${vcf_base}' --write-index=tbi '${vcf_base}'"
   done
 }
