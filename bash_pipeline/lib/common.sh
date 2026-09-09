@@ -61,6 +61,7 @@ run_docker() {
   mkdir -p "${workdir}"
   docker run --rm \
     --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp \
     -v "${DATA_ROOT}:${DATA_ROOT}" \
     -v "${PIPELINE_DIR}/py:/pipeline-scripts:ro" \
     -w "${workdir}" \
@@ -75,6 +76,7 @@ run_docker_gpu() {
   # shellcheck disable=SC2086 # gpu_docker_args is intentionally word-split (e.g. "-e FOO=bar")
   docker run --rm ${gpu_docker_args} \
     --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp \
     -v "${DATA_ROOT}:${DATA_ROOT}" \
     -v "${PIPELINE_DIR}/py:/pipeline-scripts:ro" \
     -w "${workdir}" \
